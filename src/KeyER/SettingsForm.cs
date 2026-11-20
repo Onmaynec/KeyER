@@ -284,6 +284,33 @@ public sealed class SettingsForm : Form
         table.Controls.Add(codeInfo, 0, codeInfoRow);
         table.SetColumnSpan(codeInfo, 2);
 
+        var integrityRow = table.RowCount++;
+        var integrityTitle = Theme.Label("IDE: проверка итогового кода", 9.2F);
+        integrityTitle.Margin = new Padding(4, 12, 4, 10);
+        table.Controls.Add(integrityTitle, 0, integrityRow);
+        var integrity = new ComboBox { Width = 230 };
+        Theme.StyleCombo(integrity);
+        integrity.Items.AddRange([
+            "Отключено (обычный набор)",
+            "Проверить без исправления",
+            "Проверить и исправить"
+        ]);
+        integrity.SelectedIndex = (int)p.CodeIntegrity;
+        integrity.SelectedIndexChanged += (_, _) =>
+            p.CodeIntegrity = (CodeIntegrityMode)integrity.SelectedIndex;
+        table.Controls.Add(integrity, 1, integrityRow);
+
+        var integrityNoteRow = table.RowCount++;
+        var integrityNote = Theme.Label(
+            "Для VS Code нужно установить расширение KeyER. Для Visual Studio\n" +
+            "используется экспериментальный адаптер DTE.\n" +
+            "Проверка доступна только в пустом документе. Исправление выполняется\n" +
+            "средствами IDE после физического набора и не сохраняет файл.", 8.3F);
+        integrityNote.ForeColor = Theme.Muted;
+        integrityNote.Margin = new Padding(4, 10, 4, 12);
+        table.Controls.Add(integrityNote, 0, integrityNoteRow);
+        table.SetColumnSpan(integrityNote, 2);
+
         var editorName = Theme.Label("Профиль редактора для режима Code", 9.2F);
         editorName.Margin = new Padding(4, 12, 4, 10);
         var editorRow = table.RowCount;
