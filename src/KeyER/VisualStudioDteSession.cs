@@ -103,6 +103,19 @@ internal sealed class VisualStudioDteSession
         }
     }
 
+    internal bool IsStillActive()
+    {
+        try
+        {
+            if (Native.GetForegroundWindow() != _targetHwnd ||
+                Native.GetWindowProcessId(_targetHwnd) != _targetPid)
+                return false;
+            dynamic doc = _dte.ActiveDocument;
+            return doc is not null && (string)doc.FullName == _documentName;
+        }
+        catch { return false; }
+    }
+
     internal (bool matched, bool repaired, string message) Finish(string source,
         CodeIntegrityMode mode)
     {
