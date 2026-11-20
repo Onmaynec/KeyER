@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace KeyER;
@@ -63,6 +64,25 @@ internal static class Native
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    public static string? GetWindowProcessName(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero) return null;
+        GetWindowThreadProcessId(hWnd, out var pid);
+        if (pid == 0) return null;
+        try { using var process = Process.GetProcessById((int)pid); return process.ProcessName; }
+        catch (Exception ex) when (ex is ArgumentException or Win32Exception or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    public static uint GetWindowProcessId(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero) return 0;
+        GetWindowThreadProcessId(hWnd, out var pid);
+        return pid;
+    }
 
     public static bool IsOwnWindow(IntPtr hWnd)
     {
