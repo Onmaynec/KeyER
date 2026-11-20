@@ -196,9 +196,10 @@ internal static class CodeAnalyzer
         {
             var list = new List<Token>();
             var i = 0;
+            var start = 0;
             while (i < line.Length)
             {
-                var start = i;
+                start = i;
                 if (_multilineString is not null)
                 {
                     var end = line.IndexOf(_multilineString, i, StringComparison.Ordinal);
