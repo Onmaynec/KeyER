@@ -14,6 +14,8 @@ internal static class Program
             await Check("Code: no unexpected changes in plain editor", CodeAndLines);
             await Check("Foreground loss prevents further keystrokes", ForegroundLoss);
             await Check("Stop cancels future keystrokes", CancelDuringTyping);
+            await Check("Pause/resume and stop during pause", PauseAndStop);
+            await Check("Global hotkeys do not accidentally require Win", Hotkeys);
             await Check("Start waits for hotkey modifiers to be released", ModifierRelease);
             await Check("Start rejects unrelated window", RejectWrongWindow);
             await Check("Settings validation handles malformed values", SettingsValidation);
@@ -117,6 +119,47 @@ internal static class Program
         Assert(device.Events == 10, $"Unexpected events after stop: {device.Events}");
         Assert(status == "Остановлено пользователем.", "Stop status");
         Assert(!engine.IsRunning && !engine.IsPaused, "Should reset after stop.");
+    }
+
+    private static async Task PauseAndStop()
+    {
+        var device = new BufferDevice();
+        var engine = Engine(device, 2);
+        device.OnEvent = () =>
+        {
+            if (device.Events == 8) engine.TogglePause();
+        };
+        var task = engine.StartAsync("paused test completed", TypingMode.Text, Profile(), Window);
+        await Task.Delay(120);
+        Assert(engine.IsPaused, "Expected paused engine.");
+        Assert(device.Events == 8, "Typing continued while paused.");
+        engine.TogglePause();
+        await task.WaitAsync(TimeSpan.FromSeconds(3));
+        Equal("paused test completed", device.Text, "resume must preserve output");
+
+        var secondDevice = new BufferDevice();
+        var secondEngine = Engine(secondDevice);
+        secondDevice.OnEvent = () =>
+        {
+            if (secondDevice.Events == 8) secondEngine.TogglePause();
+        };
+        var secondTask = secondEngine.StartAsync("this never finishes", TypingMode.Text, Profile(), Window);
+        await Task.Delay(120);
+        secondEngine.Stop();
+        await secondTask.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert(secondDevice.Events == 8, "Stopping during pause should inject no more keys.");
+        Assert(!secondEngine.IsRunning, "Engine should reset state after stop while paused.");
+    }
+
+    private static Task Hotkeys()
+    {
+        var start = Keys.Control | Keys.Alt | Keys.F5;
+        var stop = Keys.Control | Keys.Alt | Keys.F7;
+        Assert(Native.HotkeyModifiers(start) == 0x4003, "Ctrl+Alt+F5 should not include MOD_WIN.");
+        Assert(Native.HotkeyText(start) == "Ctrl+Alt+F5", "Hotkey display");
+        Assert(Native.HotkeyModifiers(stop) == 0x4003, "Stop should not require Win.");
+        Assert(Native.HotkeyModifiers(Keys.Shift | Keys.F8) == 0x4004, "Shift F8 mapping.");
+        return Task.CompletedTask;
     }
 
     private static async Task ModifierRelease()
