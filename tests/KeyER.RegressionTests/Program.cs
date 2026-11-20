@@ -15,6 +15,7 @@ internal static class Program
             await Check("Text v0.2: delayed multiword repairs and all correction strategies", HumanTextCorrections);
             await Check("Text v0.2: chat, tabs, lists, mixed Unicode", HumanTextFormats);
             await Check("Text v0.2: smooth speed and paragraph breaks", HumanTextTiming);
+            await Check("Text v0.2: short and long words, digits and familiar pairs", HumanTextCadenceRules);
             await Check("Foreground loss prevents further keystrokes", ForegroundLoss);
             await Check("Stop cancels future keystrokes", CancelDuringTyping);
             await Check("Pause/resume and stop during pause", PauseAndStop);
@@ -193,6 +194,46 @@ internal static class Program
         Assert(intervals.SequenceEqual(otherIntervals), "Typing intervals should reproduce with the same seed.");
     }
 
+    private static async Task HumanTextCadenceRules()
+    {
+        var profile = Profile(0);
+        profile.SpeedVariationPercent = 0;
+        profile.BurstPercent = 0;
+        profile.FatiguePercent = 0;
+        profile.ShortWordSpeedPercent = 220;
+        profile.LongWordSpeedPercent = 50;
+        profile.SpeedSmoothingPercent = 100;
+        profile.DigitSlowdownPercent = 300;
+        profile.PunctuationSlowdownPercent = 300;
+        profile.FamiliarPairBoostPercent = 0;
+
+        async Task<List<int>> Durations(string sample)
+        {
+            var measures = new List<int>();
+            var engine = new TypingEngine(new BufferDevice(), (milliseconds, cancellation) =>
+            {
+                cancellation.ThrowIfCancellationRequested();
+                measures.Add(milliseconds);
+                return Task.CompletedTask;
+            }, () => new Random(37));
+            await engine.StartAsync(sample, TypingMode.Text, profile, Window);
+            return measures;
+        }
+
+        var shortWord = await Durations("cat");
+        var longWord = await Durations("abcdefghijklmnop");
+        var regular = await Durations("abcde");
+        var digits = await Durations("12345");
+        var punctuation = await Durations("abcde;");
+        Assert(shortWord.Average() < longWord.Average(), "Short words must be faster than long words with these profile settings.");
+        Assert(digits.Average() > regular.Average(), "Digits should have an independent slowdown.");
+        Assert(punctuation[^1] > punctuation[0], "Punctuation should slow the current symbol.");
+
+        profile.FamiliarPairBoostPercent = 55;
+        var familiar = await Durations("th");
+        Assert(familiar.Count == 2 && familiar[1] < familiar[0], "Familiar 'th' pair should accelerate.");
+    }
+
     private static async Task CodeAndLines()
     {
         const string source = "using System;\r\n\r\nclass Demo {\r\n    static void Main() {\r\n        Console.WriteLine(\"OK\");\r\n    }\r\n}\r\n";
@@ -307,6 +348,14 @@ internal static class Program
         Assert(settings.GetProfile().TypoPercent == 30m, "Maximum typo");
         Assert(settings.GetProfile().PauseMaxMilliseconds >= settings.GetProfile().PauseMinMilliseconds, "Valid pause range");
         Assert(settings.Mode == TypingMode.Text, "Mode fallback");
+        Assert(settings.Profiles.Any(x => x.Name == "Обычный текст") &&
+               settings.Profiles.Any(x => x.Name == "Переписка"),
+            "Old profiles should be migrated to include the Text presets.");
+        Assert(settings.Profiles.Any(x => x.Name == "Профиль"),
+            "Custom/invalid profile should be kept after validation.");
+        var previousCount = settings.Profiles.Count;
+        settings.Validate();
+        Assert(settings.Profiles.Count == previousCount, "Migration must be idempotent.");
         return Task.CompletedTask;
     }
 
