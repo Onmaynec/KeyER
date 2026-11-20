@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.IO.Pipes;
 using KeyER;
 
 internal static class Program
@@ -27,6 +29,8 @@ internal static class Program
             await Check("Start waits for hotkey modifiers to be released", ModifierRelease);
             await Check("Start rejects unrelated window", RejectWrongWindow);
             await Check("Settings validation handles malformed values", SettingsValidation);
+            await Check("IDE 0.4: same-user pipe roundtrip and session invalidation", IdePipeRoundTrip);
+            await Check("IDE 0.4: verified mode remains opt-in", IdeSettingsSafety);
             Console.WriteLine($"PASS: {_passed} regression checks");
             return 0;
         }
@@ -392,6 +396,7 @@ internal static class Program
         engine.StatusChanged += s => status = s;
         await engine.StartAsync(new string('a', 60), TypingMode.Text, Profile(), Window);
         Assert(device.Events == 10, $"Expected 10 events, got {device.Events}.");
+        Assert(engine.LastOutcome == TypingOutcome.FocusLost, "Foreground loss outcome");
         Assert(status is not null && status.Contains("окно изменилось", StringComparison.OrdinalIgnoreCase),
             "Target loss must be reported.");
     }
@@ -408,6 +413,7 @@ internal static class Program
         engine.StatusChanged += s => status = s;
         await engine.StartAsync(new string('a', 70), TypingMode.Text, Profile(), Window);
         Assert(device.Events == 10, $"Unexpected events after stop: {device.Events}");
+        Assert(engine.LastOutcome == TypingOutcome.Cancelled, "Stopped outcome");
         Assert(status == "Остановлено пользователем.", "Stop status");
         Assert(!engine.IsRunning && !engine.IsPaused, "Should reset after stop.");
     }
@@ -474,6 +480,71 @@ internal static class Program
         catch (InvalidOperationException) { threw = true; }
         Assert(threw, "Expected failure when target is not foreground.");
         Assert(device.Events == 0, "No keys may be sent to wrong foreground target.");
+    }
+
+    private static async Task IdePipeRoundTrip()
+    {
+        using var bridge = new IdeBridgeServer();
+        var invalidation = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bridge.SessionInvalidated += session => invalidation.TrySetResult(session);
+        bridge.Start();
+
+        using var client = new NamedPipeClientStream(".",
+            IdeBridgeServer.PipeName, PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        await client.ConnectAsync(3500);
+        using var reader = new StreamReader(client, new UTF8Encoding(false),
+            detectEncodingFromByteOrderMarks: false, bufferSize: 8192, leaveOpen: true);
+        using var writer = new StreamWriter(client, new UTF8Encoding(false), 8192,
+            leaveOpen: true) { AutoFlush = true };
+
+        var simulatedExtension = Task.Run(async () =>
+        {
+            var request = await reader.ReadLineAsync();
+            Assert(request is not null, "Named pipe request missing");
+            using var parsed = JsonDocument.Parse(request!);
+            Assert(parsed.RootElement.GetProperty("type").GetString() == "ping",
+                "Request command should match");
+            var id = parsed.RootElement.GetProperty("id").GetInt64();
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                replyTo = id, ok = true, extension = "VS Code", version = 1
+            }));
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                type = "invalidated", sessionId = "test-session"
+            }));
+        });
+
+        for (var i = 0; i < 100 && !bridge.IsConnected; i++)
+            await Task.Delay(20);
+        Assert(bridge.IsConnected, "Bridge should accept same-user client");
+
+        var response = await bridge.RequestAsync("ping", new { check = true },
+            timeoutMilliseconds: 3000);
+        Assert(response.GetProperty("ok").GetBoolean(), "Successful round-trip");
+        Assert(response.GetProperty("extension").GetString() == "VS Code", "Extension identity");
+        await simulatedExtension.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert(await invalidation.Task.WaitAsync(TimeSpan.FromSeconds(3)) == "test-session",
+            "Session invalidation must reach native host");
+
+        var isAvailable = bridge.IsConnected;
+        Assert(isAvailable, "Bridge should stay connected while client is open");
+    }
+
+    private static Task IdeSettingsSafety()
+    {
+        var profile = new TypingProfile();
+        Assert(profile.CodeIntegrity == CodeIntegrityMode.Off,
+            "IDE verification must be opt-in for existing users");
+        profile.CodeIntegrity = (CodeIntegrityMode)77;
+        profile.Validate();
+        Assert(profile.CodeIntegrity == CodeIntegrityMode.Off,
+            "Invalid mode must fall back to Off");
+        Assert(!VisualStudioDteSession.TryPrepare(IntPtr.Zero,
+            out _, out var message), "Invalid target window must be rejected");
+        Assert(message.Length > 0, "DTE rejection must be explained");
+        return Task.CompletedTask;
     }
 
     private static Task SettingsValidation()
