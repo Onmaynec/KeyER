@@ -12,6 +12,10 @@ internal static class Program
             await Check("Unicode, line breaks and tabs", UnicodeAndLines);
             await Check("Text: random typo correction (100 seeds)", RandomTypos);
             await Check("Code: no unexpected changes in plain editor", CodeAndLines);
+            await Check("Code 0.3: exact lexical plans across 15 languages", CodePlanning);
+            await Check("Code 0.3: multi-line comments, strings and nesting", CodeLexicalContexts);
+            await Check("Code 0.3: accuracy with deliberate identifier typos and reviews", CodeTypingAccuracy);
+            await Check("Code 0.3: contextual pauses and manual language selection", CodeTimingAndOverride);
             await Check("Text v0.2: delayed multiword repairs and all correction strategies", HumanTextCorrections);
             await Check("Text v0.2: chat, tabs, lists, mixed Unicode", HumanTextFormats);
             await Check("Text v0.2: smooth speed and paragraph breaks", HumanTextTiming);
@@ -86,6 +90,143 @@ internal static class Program
             Equal(source.Replace("\r\n", "\n"), device.Text, $"seed={seed}");
             Assert(device.Cursor == device.Text.Length, $"Cursor position seed={seed}");
         }
+    }
+
+    private static Task CodePlanning()
+    {
+        var samples = new (string filename, string source, CodeAnalyzer.Language expected)[]
+        {
+            ("hello.cs", "using System;\r\nclass A { string S = \"}\"; }\r\n", CodeAnalyzer.Language.CSharp),
+            ("main.cpp", "#include <iostream>\nint main() { return 0; }\n", CodeAnalyzer.Language.Cpp),
+            ("hello.py", "def f(x):\n    return x + 1\n", CodeAnalyzer.Language.Python),
+            ("app.js", "function main() { return 1; }\n", CodeAnalyzer.Language.JavaScript),
+            ("app.ts", "export const add = (a: number) => a + 1;\n", CodeAnalyzer.Language.TypeScript),
+            ("main.go", "package main\nfunc main() {}\n", CodeAnalyzer.Language.Go),
+            ("lib.rs", "pub fn greet() { println!(\"hi\"); }\n", CodeAnalyzer.Language.Rust),
+            ("main.java", "class App { public static void main() {} }\n", CodeAnalyzer.Language.Java),
+            ("index.html", "<html>\n<!-- note -->\n<div>Hello</div>\n</html>", CodeAnalyzer.Language.Html),
+            ("style.css", "/* comment */\n.a { color: red; }\n", CodeAnalyzer.Language.Css),
+            ("app.json", "{\"text\": \"} not brace\", \"count\": 2}", CodeAnalyzer.Language.Json),
+            ("schema.sql", "SELECT id FROM users WHERE id = 7;\n", CodeAnalyzer.Language.Sql),
+            ("build.sh", "#!/bin/bash\nprintf 'hello'\n", CodeAnalyzer.Language.Shell),
+            ("app.ps1", "# powershell\nWrite-Host \"hello\"\n", CodeAnalyzer.Language.PowerShell),
+            ("main.swift", "func main() { print(\"hi\") }\n", CodeAnalyzer.Language.Swift)
+        };
+        foreach (var (file, source, lang) in samples)
+        {
+            var plan = CodeAnalyzer.Analyze(source, file);
+            Assert(plan.Language == lang, $"Language for {file}");
+            Equal(source.Replace("\r\n", "\n"), plan.Reassemble(), $"reassemble {file}");
+            foreach (var line in plan.Lines)
+            {
+                Equal(line.Text, string.Concat(line.Tokens.Select(x => x.Text)), $"tokens {file}:{line.Number}");
+                Assert(line.Tokens.Select((x, i) => x.Offset == line.Tokens.Take(i).Sum(t => t.Text.Length)).All(x => x),
+                    $"token offsets {file}:{line.Number}");
+            }
+        }
+        Assert(CodeAnalyzer.Detect("note.py", "function foo() {}") == CodeAnalyzer.Language.Python,
+            "File extension must win over heuristics");
+        Assert(CodeAnalyzer.Detect(null, "def example():\n    pass\n") == CodeAnalyzer.Language.Python,
+            "Python snippet detection");
+        Assert(CodeAnalyzer.Analyze("anything", "a.py", CodeAnalyzer.Language.CSharp).Language ==
+            CodeAnalyzer.Language.CSharp, "Manual language override must win");
+        return Task.CompletedTask;
+    }
+
+    private static Task CodeLexicalContexts()
+    {
+        var csharp = CodeAnalyzer.Analyze(
+            "class Outer {\n" +
+            "  string txt = \"} // not a comment\";\n" +
+            "  /* class Fake\n" +
+            "     } hidden { */\n" +
+            "  void Go() {\n" +
+            "    // def hidden()\n" +
+            "    return;\n" +
+            "  }\n" +
+            "}\n", "test.cs");
+        Assert(csharp.Lines[1].Depth == 1, "String closing brace shouldn't change depth");
+        Assert(csharp.Lines[2].Tokens.Any(t => t.Kind == CodeAnalyzer.TokenKind.Comment),
+            "C# block comment opening");
+        Assert(csharp.Lines[3].Tokens.Any(t => t.Kind == CodeAnalyzer.TokenKind.Comment),
+            "C# continued block comment");
+        Assert(csharp.Lines[4].Kind == CodeAnalyzer.LineKind.Function,
+            "C# method line classification");
+        Assert(csharp.Lines[6].Kind == CodeAnalyzer.LineKind.Return, "Return line classification");
+        Assert(csharp.Lines[8].Depth == 0, "C# outer closing brace depth");
+
+        var python = CodeAnalyzer.Analyze(
+            "def example():\n" +
+            "    text = \"\"\"class No\n" +
+            "    def not_function():\n" +
+            "    \"\"\"\n" +
+            "    # class not_a_class\n" +
+            "    return text\n", "example.py");
+        Assert(python.Lines[0].Kind == CodeAnalyzer.LineKind.Function, "Python function");
+        Assert(python.Lines[2].Tokens.All(t => t.Kind == CodeAnalyzer.TokenKind.String),
+            "Python triple-quoted block");
+        Assert(python.Lines[4].Kind == CodeAnalyzer.LineKind.Comment, "Python hash comment");
+        Assert(python.Lines[5].Depth == 1, "Python indentation depth");
+
+        var html = CodeAnalyzer.Analyze("<div>\n<!-- <b>\n  comment -->\n</div>", "index.html");
+        Assert(html.Lines[1].Tokens.Single().Kind == CodeAnalyzer.TokenKind.Comment, "HTML comment");
+        Assert(html.Lines[2].Tokens.Any(t => t.Kind == CodeAnalyzer.TokenKind.Comment), "HTML comment continuation");
+        return Task.CompletedTask;
+    }
+
+    private static async Task CodeTypingAccuracy()
+    {
+        var examples = new (string name, string code)[]
+        {
+            ("Example.cs", "using System;\nclass Test {\n    static int Sum(int count) {\n        return count + 42;\n    }\n}\n"),
+            ("script.py", "def greet(name):\n    message = 'Hello ' + name\n    if len(message) > 5:\n        print(message)\n"),
+            ("site.html", "<!DOCTYPE html>\n<html><body><h1>Hi!</h1></body></html>\n"),
+            ("data.json", "{\n  \"name\": \"KeyER\",\n  \"count\": 42,\n  \"active\": true\n}\n"),
+            ("query.sql", "SELECT id, name FROM people WHERE active = 1;\n"),
+            ("main.cpp", "#include <string>\nint main() { int answer = 42; return answer; }\n"),
+            ("script.js", "function greet(name) {\n  return 'Hi ' + name;\n}\n")
+        };
+        foreach (var (file, code) in examples)
+        {
+            for (var seed = 0; seed < 25; seed++)
+            {
+                var profile = Profile(30m);
+                profile.CodeReviewPercent = 25;
+                profile.CodeLinePauseMilliseconds = 0;
+                profile.CodeFunctionPauseMilliseconds = 0;
+                profile.CodeBlockPauseMilliseconds = 0;
+                profile.CodeSyntaxPauseMilliseconds = 0;
+                var device = new BufferDevice();
+                await Engine(device, seed).StartAsync(code, TypingMode.Code, profile,
+                    Window, file);
+                Equal(code, device.Text, $"Code typed {file}, seed={seed}");
+                Assert(device.Cursor == device.Text.Length, $"Code caret {file}:{seed}");
+            }
+        }
+    }
+
+    private static async Task CodeTimingAndOverride()
+    {
+        var delays = new List<int>();
+        var profile = Profile(0m);
+        profile.CodeFunctionPauseMilliseconds = 500;
+        profile.CodeBlockPauseMilliseconds = 300;
+        profile.CodeLinePauseMilliseconds = 100;
+        profile.CodeSyntaxPauseMilliseconds = 200;
+        var device = new BufferDevice();
+        var engine = new TypingEngine(device, (ms, cancellation) =>
+        {
+            cancellation.ThrowIfCancellationRequested();
+            delays.Add(ms);
+            return Task.CompletedTask;
+        }, () => new Random(2));
+        const string source = "def example(name):\n    return 'Hello ' + name\n";
+        await engine.StartAsync(source, TypingMode.Code, profile, Window,
+            null, "Python");
+        Equal(source, device.Text, "Manual Python typing");
+        Assert(delays.Any(d => d >= 500), "Function planning pause expected");
+        Assert(delays.Contains(100), "Line pause expected");
+        Assert(delays.Any(d => d >= 200), "Syntax pause expected");
     }
 
     private static async Task HumanTextCorrections()
