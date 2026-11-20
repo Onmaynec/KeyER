@@ -1,0 +1,38 @@
+{
+  "name": "keyer-ide-bridge",
+  "displayName": "KeyER — IDE Integration",
+  "description": "Local same-user bridge for verifying keyboard-simulated Code typing in VS Code.",
+  "version": "0.4.0",
+  "publisher": "onmaynec",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "keyerBridge.showStatus",
+        "title": "KeyER: Connection status"
+      }
+    ]
+  },
+  "scripts": {
+    "check": "node --check extension.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Onmaynec/KeyER.git"
+  }
+}
