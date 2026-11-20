@@ -5,6 +5,8 @@ namespace KeyER;
 
 public enum TypingMode { Text, Code }
 public enum EditorType { Generic, VisualStudio, VSCode }
+public enum TextEnterMode { Enter, ShiftEnter }
+public enum TextTabMode { Tab, Spaces }
 
 public sealed class TypingProfile
 {
@@ -24,6 +26,28 @@ public sealed class TypingProfile
     public bool ClearAutoIndent { get; set; } = false;
     public int StartCountdownSeconds { get; set; } = 3;
 
+    // Human Typing Engine 2.0 — applies to Text mode; Code stays independent.
+    public int ShortWordSpeedPercent { get; set; } = 110;
+    public int LongWordSpeedPercent { get; set; } = 90;
+    public int DigitSlowdownPercent { get; set; } = 135;
+    public int PunctuationSlowdownPercent { get; set; } = 150;
+    public int SpecialSlowdownPercent { get; set; } = 125;
+    public int FamiliarPairBoostPercent { get; set; } = 18;
+    public int SpeedSmoothingPercent { get; set; } = 28;
+    public int SentencePauseMinMilliseconds { get; set; } = 180;
+    public int SentencePauseMaxMilliseconds { get; set; } = 430;
+    public int ParagraphPauseMinMilliseconds { get; set; } = 180;
+    public int ParagraphPauseMaxMilliseconds { get; set; } = 650;
+    public int BlockPauseMinMilliseconds { get; set; } = 850;
+    public int BlockPauseMaxMilliseconds { get; set; } = 1800;
+    public int LateCorrectionMaxWords { get; set; } = 3;
+    public int LateCorrectionMaxDistance { get; set; } = 100;
+    public int DeleteCorrectionPercent { get; set; } = 25;
+    public int SelectionCorrectionPercent { get; set; } = 25;
+    public TextEnterMode TextEnter { get; set; } = TextEnterMode.Enter;
+    public TextTabMode TextTab { get; set; } = TextTabMode.Tab;
+    public int TabSpaces { get; set; } = 4;
+
     public TypingProfile Clone() =>
         JsonSerializer.Deserialize<TypingProfile>(JsonSerializer.Serialize(this))!;
 
@@ -41,6 +65,26 @@ public sealed class TypingProfile
         BurstPercent = Math.Clamp(BurstPercent, 0, 80);
         CursorReviewPercent = Math.Clamp(CursorReviewPercent, 0, 20);
         StartCountdownSeconds = Math.Clamp(StartCountdownSeconds, 1, 10);
+        ShortWordSpeedPercent = Math.Clamp(ShortWordSpeedPercent, 40, 250);
+        LongWordSpeedPercent = Math.Clamp(LongWordSpeedPercent, 40, 250);
+        DigitSlowdownPercent = Math.Clamp(DigitSlowdownPercent, 100, 350);
+        PunctuationSlowdownPercent = Math.Clamp(PunctuationSlowdownPercent, 100, 350);
+        SpecialSlowdownPercent = Math.Clamp(SpecialSlowdownPercent, 100, 350);
+        FamiliarPairBoostPercent = Math.Clamp(FamiliarPairBoostPercent, 0, 65);
+        SpeedSmoothingPercent = Math.Clamp(SpeedSmoothingPercent, 1, 100);
+        SentencePauseMinMilliseconds = Math.Clamp(SentencePauseMinMilliseconds, 0, 10000);
+        SentencePauseMaxMilliseconds = Math.Clamp(SentencePauseMaxMilliseconds, SentencePauseMinMilliseconds, 15000);
+        ParagraphPauseMinMilliseconds = Math.Clamp(ParagraphPauseMinMilliseconds, 0, 15000);
+        ParagraphPauseMaxMilliseconds = Math.Clamp(ParagraphPauseMaxMilliseconds, ParagraphPauseMinMilliseconds, 20000);
+        BlockPauseMinMilliseconds = Math.Clamp(BlockPauseMinMilliseconds, 0, 30000);
+        BlockPauseMaxMilliseconds = Math.Clamp(BlockPauseMaxMilliseconds, BlockPauseMinMilliseconds, 60000);
+        LateCorrectionMaxWords = Math.Clamp(LateCorrectionMaxWords, 1, 6);
+        LateCorrectionMaxDistance = Math.Clamp(LateCorrectionMaxDistance, 20, 250);
+        DeleteCorrectionPercent = Math.Clamp(DeleteCorrectionPercent, 0, 100);
+        SelectionCorrectionPercent = Math.Clamp(SelectionCorrectionPercent, 0, 100 - DeleteCorrectionPercent);
+        if (!Enum.IsDefined(TextEnter)) TextEnter = TextEnterMode.Enter;
+        if (!Enum.IsDefined(TextTab)) TextTab = TextTabMode.Tab;
+        TabSpaces = Math.Clamp(TabSpaces, 1, 8);
         Name = (Name ?? "").Trim();
         if (Name.Length == 0) Name = "Профиль";
     }
@@ -61,7 +105,13 @@ public sealed class AppSettings
         new() { Name = "Спокойный", CharactersPerMinute = 145, SpeedVariationPercent = 32, TypoPercent = 1.0m, LongPausePercent = 2.0m, FatiguePercent = 12 },
         new() { Name = "Сбалансированный", CharactersPerMinute = 240, TypoPercent = 2.5m },
         new() { Name = "Быстрый", CharactersPerMinute = 410, SpeedVariationPercent = 25, TypoPercent = 3.5m, BurstPercent = 40 },
-        new() { Name = "Аккуратный код", CharactersPerMinute = 190, TypoPercent = 0.8m, LongPausePercent = 2.0m, Editor = EditorType.VisualStudio }
+        new() { Name = "Аккуратный код", CharactersPerMinute = 190, TypoPercent = 0.8m, LongPausePercent = 2.0m, Editor = EditorType.VisualStudio },
+        new() { Name = "Обычный текст", CharactersPerMinute = 260, TypoPercent = 1.8m,
+            ShortWordSpeedPercent = 118, LongWordSpeedPercent = 88, LateCorrectionPercent = 40 },
+        new() { Name = "Переписка", CharactersPerMinute = 320, TypoPercent = 2.6m,
+            ShortWordSpeedPercent = 125, LongWordSpeedPercent = 95, TextEnter = TextEnterMode.ShiftEnter,
+            SentencePauseMinMilliseconds = 90, SentencePauseMaxMilliseconds = 320,
+            BlockPauseMinMilliseconds = 550, BlockPauseMaxMilliseconds = 1100 }
     ];
 
     public TypingProfile GetProfile() =>
