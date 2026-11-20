@@ -127,7 +127,12 @@ internal sealed class IdeBridgeServer : IDisposable
                 pipe?.Dispose();
                 if (wasConnected) ConnectionChanged?.Invoke(false);
             }
-            // Fast reconnect if the extension restarts.
+            // Avoid spinning if another KeyER instance owns the pipe.
+            if (!token.IsCancellationRequested)
+            {
+                try { await Task.Delay(700, token); }
+                catch (OperationCanceledException) { break; }
+            }
         }
     }
 
