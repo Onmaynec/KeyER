@@ -2,32 +2,74 @@ namespace KeyER;
 
 public sealed class TargetWindowChangedException : Exception
 {
-    public TargetWindowChangedException() : base("Активное окно изменилось. Набор остановлен во избежание ввода не туда.") { }
+    public TargetWindowChangedException()
+        : base("Активное окно изменилось. Набор остановлен, чтобы не вводить текст не туда.") { }
+}
+
+internal interface ITypingDevice
+{
+    bool IsTargetActive(IntPtr target);
+    bool AreModifiersHeld { get; }
+    void TypeUnicode(char character);
+    void PressKey(Keys key);
+    void PressChord(Keys modifier, Keys key);
+}
+
+internal sealed class WindowsTypingDevice : ITypingDevice
+{
+    public bool IsTargetActive(IntPtr target) =>
+        target != IntPtr.Zero && Native.IsWindow(target) &&
+        !Native.IsOwnWindow(target) && Native.GetForegroundWindow() == target;
+
+    public bool AreModifiersHeld =>
+        Native.IsPressed(Keys.ControlKey) || Native.IsPressed(Keys.Menu) ||
+        Native.IsPressed(Keys.ShiftKey) || Native.IsPressed(Keys.LWin) ||
+        Native.IsPressed(Keys.RWin);
+
+    public void TypeUnicode(char character) => Native.TypeUnicode(character);
+    public void PressKey(Keys key) => Native.PressKey(key);
+    public void PressChord(Keys modifier, Keys key) => Native.PressChord(modifier, key);
 }
 
 /// <summary>
-/// Simulates typing in the chosen foreground window. It never reads or modifies
-/// the target application's document through an API or the clipboard.
+/// Keyboard input simulation. The target is revalidated before every key event.
+/// An injectable device enables deterministic regression tests without emitting real input.
 /// </summary>
 public sealed class TypingEngine
 {
     private readonly object _gate = new();
+    private readonly ITypingDevice _device;
+    private readonly Func<int, CancellationToken, Task> _wait;
+    private readonly Func<Random> _randomFactory;
     private CancellationTokenSource? _cts;
     private bool _paused;
 
     public event Action<int, int>? ProgressChanged;
     public event Action<string>? StatusChanged;
+
+    public TypingEngine()
+        : this(new WindowsTypingDevice(), Task.Delay, () => new Random()) { }
+
+    internal TypingEngine(ITypingDevice device, Func<int, CancellationToken, Task> wait,
+        Func<Random> randomFactory)
+    {
+        _device = device;
+        _wait = wait;
+        _randomFactory = randomFactory;
+    }
+
     public bool IsRunning { get { lock (_gate) return _cts is not null; } }
     public bool IsPaused { get { lock (_gate) return _paused; } }
 
     public async Task StartAsync(string content, TypingMode mode, TypingProfile sourceProfile, IntPtr target)
     {
         if (string.IsNullOrEmpty(content)) throw new ArgumentException("Нет текста для ввода.");
-        if (target == IntPtr.Zero || !Native.IsWindow(target) || Native.IsOwnWindow(target))
-            throw new InvalidOperationException("Выберите окно другого приложения и установите курсор.");
+        if (!_device.IsTargetActive(target))
+            throw new InvalidOperationException("Выберите активное окно другого приложения и установите курсор.");
 
         var profile = sourceProfile.Clone();
         profile.Validate();
+
         CancellationTokenSource local;
         lock (_gate)
         {
@@ -53,6 +95,7 @@ public sealed class TypingEngine
         }
         catch (Exception ex)
         {
+            DiagnosticLog.Error("typing", ex);
             StatusChanged?.Invoke("Ошибка ввода: " + ex.Message);
         }
         finally
@@ -71,12 +114,14 @@ public sealed class TypingEngine
 
     public void TogglePause()
     {
+        string? status = null;
         lock (_gate)
         {
-            if (_cts is null) return;
+            if (_cts is null || _cts.IsCancellationRequested) return;
             _paused = !_paused;
-            StatusChanged?.Invoke(_paused ? "Пауза. Вернитесь в целевое окно для продолжения." : "Продолжение...");
+            status = _paused ? "Пауза. Для продолжения вернитесь в целевое окно." : "Продолжение...";
         }
+        StatusChanged?.Invoke(status);
     }
 
     public void Stop()
@@ -91,38 +136,38 @@ public sealed class TypingEngine
         var lines = source.Split('\n');
         var total = source.Length;
         var done = 0;
-        var random = new Random();
-        var inBurst = false;
+        var random = _randomFactory();
         var burstRemaining = 0;
+        var inBurst = false;
 
-        for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
+        await WaitForHotkeyReleaseAsync(target, token);
+
+        for (var lineIndex = 0; lineIndex < lines.Length; lineIndex++)
         {
             await EnsureActiveAsync(target, token);
+
             if (lineIndex > 0)
             {
-                Native.PressKey(Keys.Enter);
+                await KeyAsync(Keys.Enter, target, token);
                 done++;
                 ProgressChanged?.Invoke(done, total);
                 await DelayAsync('\n', done, profile, mode, random, false, token);
 
                 if (mode == TypingMode.Code && profile.ClearAutoIndent && lines[lineIndex].Length > 0)
                 {
-                    // Select auto-inserted whitespace or brace on the NEW line.
-                    // The next typed character replaces the selection. Do not press
-                    // Backspace: that would merge lines when the line is empty.
-                    Native.PressKey(Keys.Home);
-                    Native.PressKey(Keys.Home); // handles "smart Home" navigation
-                    Native.PressChord(Keys.ShiftKey, Keys.End);
+                    // Experimental and opt-in; editor-specific behavior is not guaranteed.
+                    await KeyAsync(Keys.Home, target, token);
+                    await KeyAsync(Keys.Home, target, token);
+                    await ChordAsync(Keys.ShiftKey, Keys.End, target, token);
                 }
             }
 
             var line = lines[lineIndex];
-            for (int i = 0; i < line.Length;)
+            for (var i = 0; i < line.Length;)
             {
                 await EnsureActiveAsync(target, token);
                 var c = line[i];
-
-                if (burstRemaining-- <= 0)
+                if (--burstRemaining <= 0)
                 {
                     inBurst = random.Next(100) < profile.BurstPercent;
                     burstRemaining = random.Next(6, 22);
@@ -130,36 +175,31 @@ public sealed class TypingEngine
 
                 if (CanMistype(c) && random.NextDouble() * 100 < (double)profile.TypoPercent)
                 {
-                    var used = await MistypeAndCorrectAsync(line, i, done, profile, mode, target,
-                        random, inBurst, token);
-                    i += used;
-                    done += used;
+                    var consumed = await MistypeAndCorrectAsync(line, i, done, profile,
+                        mode, target, random, inBurst, token);
+                    i += consumed;
+                    done += consumed;
                 }
                 else
                 {
-                    SendCharacter(c);
+                    await CharacterAsync(c, target, token);
                     await DelayAsync(c, done, profile, mode, random, inBurst, token);
                     i++;
                     done++;
                 }
 
-                // No unbounded UI event stream for very large documents.
                 if (done % 4 == 0 || i >= line.Length)
                     ProgressChanged?.Invoke(done, total);
             }
 
-            // A harmless line-review gesture only on ordinary, unpaired text.
-            // Code editors may have inserted closing brackets, so avoid this for
-            // lines with syntactic delimiters.
-            if (line.Length > 0 &&
-                random.Next(100) < profile.CursorReviewPercent &&
-                (mode == TypingMode.Text || line.IndexOfAny("()[]{}\"'".ToCharArray()) < 0))
+            // Use a reversible one-step caret review, never Home/End.
+            // Home/End is editor-dependent and may leave the caret at the wrong location.
+            if (mode == TypingMode.Text && line.Length > 0 &&
+                random.Next(100) < profile.CursorReviewPercent)
             {
-                await EnsureActiveAsync(target, token);
-                Native.PressKey(Keys.Home);
-                await Task.Delay(random.Next(80, 220), token);
-                await EnsureActiveAsync(target, token);
-                Native.PressKey(Keys.End);
+                await KeyAsync(Keys.Left, target, token);
+                await PauseAsync(random.Next(80, 220), token);
+                await KeyAsync(Keys.Right, target, token);
             }
         }
 
@@ -170,85 +210,79 @@ public sealed class TypingEngine
         TypingProfile profile, TypingMode mode, IntPtr target, Random random, bool burst,
         CancellationToken token)
     {
-        // Only plain letters are considered. Delayed corrections are constrained
-        // to a single contiguous word, so cursor moves never cross a line break,
-        // indentation, brace or other IDE-sensitive punctuation.
-        var available = 0;
-        var limit = Math.Min(profile.CorrectionLagCharacters, line.Length - index - 1);
-        while (available < limit && CanMistype(line[index + 1 + available])) available++;
-        var lag = available > 0 && random.Next(100) < profile.LateCorrectionPercent
-            ? random.Next(1, available + 1) : 0;
-
-        var kind = random.Next(4);
+        // All error types stay inside one uninterrupted word.
+        var kind = random.Next(4); // 0 replace, 1 omit, 2 double, 3 transpose
         if (kind == 3 && (index + 1 >= line.Length || !CanMistype(line[index + 1])))
             kind = 0;
 
-        var consumed = 1;
+        var consumed = kind == 3 ? 2 : 1;
+        var maxLag = Math.Min(profile.CorrectionLagCharacters, line.Length - index - consumed);
+        var available = 0;
+        while (available < maxLag && CanMistype(line[index + consumed + available]))
+            available++;
+        var lag = available > 0 && random.Next(100) < profile.LateCorrectionPercent
+            ? random.Next(1, available + 1) : 0;
+
         switch (kind)
         {
-            case 0: // substitution
-                SendCharacter(WrongLetter(line[index], random));
+            case 0:
+                await CharacterAsync(WrongLetter(line[index], random), target, token);
                 break;
-            case 1: // omission: don't type the character at all
-                break;
-            case 2: // duplicate
-                SendCharacter(line[index]);
+            case 1:
+                break; // omitted original character
+            case 2:
+                await CharacterAsync(line[index], target, token);
                 await DelayAsync(line[index], done, profile, mode, random, burst, token);
-                SendCharacter(line[index]);
+                await CharacterAsync(line[index], target, token);
                 break;
-            default: // adjacent transposition
-                SendCharacter(line[index + 1]);
+            case 3:
+                await CharacterAsync(line[index + 1], target, token);
                 await DelayAsync(line[index + 1], done, profile, mode, random, burst, token);
-                SendCharacter(line[index]);
-                consumed = 2;
-                // Don't retype the second letter among the delayed chars.
-                lag = Math.Max(0, lag - 1);
+                await CharacterAsync(line[index], target, token);
                 break;
         }
 
         await DelayAsync(line[index], done, profile, mode, random, burst, token);
 
-        for (int j = 0; j < lag; j++)
+        for (var j = 0; j < lag; j++)
         {
-            await EnsureActiveAsync(target, token);
             var c = line[index + consumed + j];
-            SendCharacter(c);
+            await CharacterAsync(c, target, token);
             await DelayAsync(c, done + consumed + j, profile, mode, random, burst, token);
         }
 
-        await EnsureActiveAsync(target, token);
-        for (int j = 0; j < lag; j++)
+        // Move from end of typed lag to the damaged segment, repair, and return.
+        for (var j = 0; j < lag; j++)
         {
-            Native.PressKey(Keys.Left);
-            await Task.Delay(random.Next(35, 100), token);
+            await KeyAsync(Keys.Left, target, token);
+            await PauseAsync(random.Next(35, 100), token);
         }
 
         switch (kind)
         {
-            case 0: // replace bad character
-                Native.PressKey(Keys.Back);
-                SendCharacter(line[index]);
+            case 0:
+                await KeyAsync(Keys.Back, target, token);
+                await CharacterAsync(line[index], target, token);
                 break;
-            case 1: // insert previously omitted character
-                SendCharacter(line[index]);
+            case 1:
+                await CharacterAsync(line[index], target, token);
                 break;
-            case 2: // remove duplicate
-                Native.PressKey(Keys.Back);
+            case 2:
+                await KeyAsync(Keys.Back, target, token);
                 break;
-            default: // remove both swapped characters; retype correctly
-                Native.PressKey(Keys.Back);
-                Native.PressKey(Keys.Back);
-                SendCharacter(line[index]);
-                SendCharacter(line[index + 1]);
+            case 3:
+                await KeyAsync(Keys.Back, target, token);
+                await KeyAsync(Keys.Back, target, token);
+                await CharacterAsync(line[index], target, token);
+                await CharacterAsync(line[index + 1], target, token);
                 break;
         }
 
-        await Task.Delay(random.Next(60, 160), token);
-        for (int j = 0; j < lag; j++)
+        await PauseAsync(random.Next(60, 160), token);
+        for (var j = 0; j < lag; j++)
         {
-            await EnsureActiveAsync(target, token);
-            Native.PressKey(Keys.Right);
-            await Task.Delay(random.Next(35, 100), token);
+            await KeyAsync(Keys.Right, target, token);
+            await PauseAsync(random.Next(35, 100), token);
         }
 
         return consumed + lag;
@@ -259,7 +293,7 @@ public sealed class TypingEngine
 
     private static char WrongLetter(char source, Random random)
     {
-        var rows = new[] { "qwertyuiop", "asdfghjkl", "zxcvbnm", "йцукенгшщзхъ", "фывапролджэ", "ячсмитьбю" };
+        string[] rows = ["qwertyuiop", "asdfghjkl", "zxcvbnm", "йцукенгшщзхъ", "фывапролджэ", "ячсмитьбю"];
         var lower = char.ToLowerInvariant(source);
         foreach (var row in rows)
         {
@@ -273,10 +307,23 @@ public sealed class TypingEngine
         return char.IsUpper(source) ? 'X' : 'x';
     }
 
-    private static void SendCharacter(char c)
+    private async Task CharacterAsync(char character, IntPtr target, CancellationToken token)
     {
-        if (c == '\t') Native.PressKey(Keys.Tab);
-        else if (c != '\0') Native.TypeUnicode(c);
+        await EnsureActiveAsync(target, token);
+        if (character == '\t') _device.PressKey(Keys.Tab);
+        else _device.TypeUnicode(character);
+    }
+
+    private async Task KeyAsync(Keys key, IntPtr target, CancellationToken token)
+    {
+        await EnsureActiveAsync(target, token);
+        _device.PressKey(key);
+    }
+
+    private async Task ChordAsync(Keys modifier, Keys key, IntPtr target, CancellationToken token)
+    {
+        await EnsureActiveAsync(target, token);
+        _device.PressChord(modifier, key);
     }
 
     private async Task EnsureActiveAsync(IntPtr target, CancellationToken token)
@@ -287,15 +334,29 @@ public sealed class TypingEngine
             bool paused;
             lock (_gate) paused = _paused;
             if (!paused) break;
-            await Task.Delay(65, token);
+            await Task.Delay(50, token);
         }
-
         token.ThrowIfCancellationRequested();
-        if (!Native.IsWindow(target) || Native.GetForegroundWindow() != target)
-            throw new TargetWindowChangedException();
+        if (!_device.IsTargetActive(target)) throw new TargetWindowChangedException();
     }
 
-    private static async Task DelayAsync(char c, int index, TypingProfile profile,
+    private async Task WaitForHotkeyReleaseAsync(IntPtr target, CancellationToken token)
+    {
+        var start = Environment.TickCount64;
+        while (_device.AreModifiersHeld)
+        {
+            await EnsureActiveAsync(target, token);
+            if (Environment.TickCount64 - start > 4000)
+                throw new InvalidOperationException(
+                    "Отпустите Ctrl, Alt, Shift и Win перед началом ввода.");
+            await Task.Delay(20, token);
+        }
+    }
+
+    private Task PauseAsync(int milliseconds, CancellationToken token) =>
+        _wait(milliseconds, token);
+
+    private async Task DelayAsync(char c, int index, TypingProfile profile,
         TypingMode mode, Random random, bool burst, CancellationToken token)
     {
         var baseMs = 60000.0 / profile.CharactersPerMinute;
@@ -305,12 +366,12 @@ public sealed class TypingEngine
         var syntaxPause = mode == TypingMode.Code && c is ';' or '{' or '}' or ':'
             ? 1.7 : 1.0;
         var delay = Math.Clamp((int)(baseMs * jitter * fatigue * speed * syntaxPause), 12, 3000);
-        await Task.Delay(delay, token);
+        await PauseAsync(delay, token);
+
         if (random.NextDouble() * 100 < (double)profile.LongPausePercent)
         {
-            var ms = random.Next(profile.PauseMinMilliseconds,
-                profile.PauseMaxMilliseconds + 1);
-            if (ms > 0) await Task.Delay(ms, token);
+            var ms = random.Next(profile.PauseMinMilliseconds, profile.PauseMaxMilliseconds + 1);
+            if (ms > 0) await PauseAsync(ms, token);
         }
     }
 }
