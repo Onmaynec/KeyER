@@ -61,7 +61,8 @@ public sealed partial class TypingEngine
     public bool IsRunning { get { lock (_gate) return _cts is not null; } }
     public bool IsPaused { get { lock (_gate) return _paused; } }
 
-    public async Task StartAsync(string content, TypingMode mode, TypingProfile sourceProfile, IntPtr target)
+    public async Task StartAsync(string content, TypingMode mode, TypingProfile sourceProfile,
+        IntPtr target, string? sourceFileName = null, string? selectedLanguage = null)
     {
         if (string.IsNullOrEmpty(content)) throw new ArgumentException("Нет текста для ввода.");
         if (!_device.IsTargetActive(target))
@@ -82,7 +83,8 @@ public sealed partial class TypingEngine
         try
         {
             StatusChanged?.Invoke("Набор текста...");
-            await Task.Run(() => RunAsync(content, mode, profile, target, local.Token));
+            await Task.Run(() => RunAsync(content, mode, profile, target, sourceFileName,
+                selectedLanguage, local.Token));
             StatusChanged?.Invoke("Готово. Ввод завершён.");
         }
         catch (OperationCanceledException)
@@ -130,7 +132,7 @@ public sealed partial class TypingEngine
     }
 
     private async Task RunAsync(string source, TypingMode mode, TypingProfile profile,
-        IntPtr target, CancellationToken token)
+        IntPtr target, string? fileName, string? selectedLanguage, CancellationToken token)
     {
         source = source.Replace("\r\n", "\n").Replace('\r', '\n');
         if (mode == TypingMode.Text)
@@ -138,77 +140,11 @@ public sealed partial class TypingEngine
             await RunHumanTextAsync(source, profile, target, token);
             return;
         }
-        var lines = source.Split('\n');
-        var total = source.Length;
-        var done = 0;
-        var random = _randomFactory();
-        var burstRemaining = 0;
-        var inBurst = false;
 
-        await WaitForHotkeyReleaseAsync(target, token);
-
-        for (var lineIndex = 0; lineIndex < lines.Length; lineIndex++)
-        {
-            await EnsureActiveAsync(target, token);
-
-            if (lineIndex > 0)
-            {
-                await KeyAsync(Keys.Enter, target, token);
-                done++;
-                ProgressChanged?.Invoke(done, total);
-                await DelayAsync('\n', done, profile, mode, random, false, token);
-
-                if (mode == TypingMode.Code && profile.ClearAutoIndent && lines[lineIndex].Length > 0)
-                {
-                    // Experimental and opt-in; editor-specific behavior is not guaranteed.
-                    await KeyAsync(Keys.Home, target, token);
-                    await KeyAsync(Keys.Home, target, token);
-                    await ChordAsync(Keys.ShiftKey, Keys.End, target, token);
-                }
-            }
-
-            var line = lines[lineIndex];
-            for (var i = 0; i < line.Length;)
-            {
-                await EnsureActiveAsync(target, token);
-                var c = line[i];
-                if (--burstRemaining <= 0)
-                {
-                    inBurst = random.Next(100) < profile.BurstPercent;
-                    burstRemaining = random.Next(6, 22);
-                }
-
-                if (CanMistype(c) && random.NextDouble() * 100 < (double)profile.TypoPercent)
-                {
-                    var consumed = await MistypeAndCorrectAsync(line, i, done, profile,
-                        mode, target, random, inBurst, token);
-                    i += consumed;
-                    done += consumed;
-                }
-                else
-                {
-                    await CharacterAsync(c, target, token);
-                    await DelayAsync(c, done, profile, mode, random, inBurst, token);
-                    i++;
-                    done++;
-                }
-
-                if (done % 4 == 0 || i >= line.Length)
-                    ProgressChanged?.Invoke(done, total);
-            }
-
-            // Use a reversible one-step caret review, never Home/End.
-            // Home/End is editor-dependent and may leave the caret at the wrong location.
-            if (mode == TypingMode.Text && line.Length > 0 &&
-                random.Next(100) < profile.CursorReviewPercent)
-            {
-                await KeyAsync(Keys.Left, target, token);
-                await PauseAsync(random.Next(80, 220), token);
-                await KeyAsync(Keys.Right, target, token);
-            }
-        }
-
-        ProgressChanged?.Invoke(total, total);
+        var language = CodeAnalyzer.Language.Auto;
+        if (!string.IsNullOrWhiteSpace(selectedLanguage))
+            Enum.TryParse(selectedLanguage, ignoreCase: true, out language);
+        await RunCodeAsync(source, profile, target, fileName, language, token);
     }
 
     private async Task<int> MistypeAndCorrectAsync(string line, int index, int done,
