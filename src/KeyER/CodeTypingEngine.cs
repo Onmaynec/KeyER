@@ -11,6 +11,7 @@ public sealed partial class TypingEngine
     {
         var plan = CodeAnalyzer.Analyze(source, filename, language);
         var random = _randomFactory();
+        var behavior = new HumanBehaviorModel(profile, random);
         var done = 0;
         var baseDelay = 60000.0 / profile.CharactersPerMinute;
         var smoothDelay = baseDelay;
@@ -39,6 +40,12 @@ public sealed partial class TypingEngine
             }
 
             await LinePauseAsync(line, profile, random, token);
+            if (line.Kind is CodeAnalyzer.LineKind.Function or CodeAnalyzer.LineKind.Type or
+                CodeAnalyzer.LineKind.Control)
+            {
+                var thinking = behavior.NextThinkingPauseMilliseconds();
+                if (thinking > 0) await PauseAsync(thinking, token);
+            }
 
             foreach (var part in line.Tokens)
             {
@@ -82,8 +89,7 @@ public sealed partial class TypingEngine
                     };
                     factor *= 1.0 + (random.NextDouble() * 2 - 1) *
                         profile.SpeedVariationPercent / 100.0;
-                    factor *= 1.0 + Math.Min(1.0, done / 4000.0) *
-                        profile.FatiguePercent / 100.0;
+                    factor *= behavior.NextSpeedFactor();
 
                     var targetDelay = Math.Clamp(baseDelay * factor, 12, 3000);
                     smoothDelay += (targetDelay - smoothDelay) * 0.28;
@@ -121,8 +127,21 @@ public sealed partial class TypingEngine
                 }
 
                 if (random.NextDouble() * 100 < (double)profile.LongPausePercent)
-                    await PauseAsync(random.Next(profile.PauseMinMilliseconds,
-                        profile.PauseMaxMilliseconds + 1), token);
+                {
+                    var rest = random.Next(profile.PauseMinMilliseconds,
+                        profile.PauseMaxMilliseconds + 1);
+                    await PauseAsync(rest, token);
+                    behavior.OnRest(rest);
+                }
+
+                // Review only an ordinary identifier, without Ctrl/Alt or Home/End.
+                if (part.Kind == CodeAnalyzer.TokenKind.Identifier &&
+                    part.Text.Length >= 3 && part.Text.All(IsReviewableCodeUnit) &&
+                    behavior.ShouldReview())
+                    await ReviewPreviousAsync(part.Text.Length, behavior, target, random, token);
+
+                var attention = behavior.NextAttentionBreakMilliseconds();
+                if (attention > 0) await PauseAsync(attention, token);
             }
         }
 
