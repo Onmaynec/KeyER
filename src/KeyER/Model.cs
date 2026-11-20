@@ -48,6 +48,16 @@ public sealed class TypingProfile
     public TextTabMode TextTab { get; set; } = TextTabMode.Tab;
     public int TabSpaces { get; set; } = 4;
 
+    // Code Intelligence v0.3: separate syntax-aware timing and review.
+    public int CodeLinePauseMilliseconds { get; set; } = 90;
+    public int CodeFunctionPauseMilliseconds { get; set; } = 520;
+    public int CodeBlockPauseMilliseconds { get; set; } = 250;
+    public int CodeSyntaxPauseMilliseconds { get; set; } = 140;
+    public int CodeIdentifierSpeedPercent { get; set; } = 115;
+    public int CodeStringSpeedPercent { get; set; } = 85;
+    public int CodeCommentSpeedPercent { get; set; } = 130;
+    public int CodeReviewPercent { get; set; } = 0;
+
     public TypingProfile Clone() =>
         JsonSerializer.Deserialize<TypingProfile>(JsonSerializer.Serialize(this))!;
 
@@ -85,6 +95,14 @@ public sealed class TypingProfile
         if (!Enum.IsDefined(TextEnter)) TextEnter = TextEnterMode.Enter;
         if (!Enum.IsDefined(TextTab)) TextTab = TextTabMode.Tab;
         TabSpaces = Math.Clamp(TabSpaces, 1, 8);
+        CodeLinePauseMilliseconds = Math.Clamp(CodeLinePauseMilliseconds, 0, 5000);
+        CodeFunctionPauseMilliseconds = Math.Clamp(CodeFunctionPauseMilliseconds, 0, 10000);
+        CodeBlockPauseMilliseconds = Math.Clamp(CodeBlockPauseMilliseconds, 0, 10000);
+        CodeSyntaxPauseMilliseconds = Math.Clamp(CodeSyntaxPauseMilliseconds, 0, 5000);
+        CodeIdentifierSpeedPercent = Math.Clamp(CodeIdentifierSpeedPercent, 40, 250);
+        CodeStringSpeedPercent = Math.Clamp(CodeStringSpeedPercent, 40, 250);
+        CodeCommentSpeedPercent = Math.Clamp(CodeCommentSpeedPercent, 40, 250);
+        CodeReviewPercent = Math.Clamp(CodeReviewPercent, 0, 30);
         Name = (Name ?? "").Trim();
         if (Name.Length == 0) Name = "Профиль";
     }
@@ -96,6 +114,7 @@ public sealed class AppSettings
     public string SelectedProfile { get; set; } = "Сбалансированный";
     public TypingMode Mode { get; set; } = TypingMode.Text;
     public string SourceFileName { get; set; } = "";
+    public string CodeLanguage { get; set; } = "Auto";
     public Keys StartHotkey { get; set; } = Keys.Control | Keys.Alt | Keys.F5;
     public Keys PauseHotkey { get; set; } = Keys.Control | Keys.Alt | Keys.F6;
     public Keys StopHotkey { get; set; } = Keys.Control | Keys.Alt | Keys.F7;
@@ -150,6 +169,9 @@ public sealed class AppSettings
         }
         SelectedProfile ??= "";
         SourceFileName ??= "";
+        if (!Enum.TryParse<CodeAnalyzer.Language>(CodeLanguage, ignoreCase: true, out var preferred) ||
+            !Enum.IsDefined(preferred))
+            CodeLanguage = "Auto";
         if (Profiles.All(p => p.Name != SelectedProfile)) SelectedProfile = Profiles[0].Name;
         if (!Enum.IsDefined(Mode)) Mode = TypingMode.Text;
         if (!ValidHotkey(StartHotkey)) StartHotkey = Keys.Control | Keys.Alt | Keys.F5;
