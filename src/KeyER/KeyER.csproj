@@ -8,7 +8,7 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>KeyER</AssemblyName>
     <RootNamespace>KeyER</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 </Project>
