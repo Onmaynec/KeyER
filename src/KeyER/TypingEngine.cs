@@ -35,7 +35,7 @@ internal sealed class WindowsTypingDevice : ITypingDevice
 /// Keyboard input simulation. The target is revalidated before every key event.
 /// An injectable device enables deterministic regression tests without emitting real input.
 /// </summary>
-public sealed class TypingEngine
+public sealed partial class TypingEngine
 {
     private readonly object _gate = new();
     private readonly ITypingDevice _device;
@@ -133,6 +133,11 @@ public sealed class TypingEngine
         IntPtr target, CancellationToken token)
     {
         source = source.Replace("\r\n", "\n").Replace('\r', '\n');
+        if (mode == TypingMode.Text)
+        {
+            await RunHumanTextAsync(source, profile, target, token);
+            return;
+        }
         var lines = source.Split('\n');
         var total = source.Length;
         var done = 0;
