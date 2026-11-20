@@ -116,7 +116,7 @@ public sealed class MainForm : Form
         {
             try
             {
-                if (Clipboard.ContainsText()) _editor.SelectedText = Clipboard.GetText();
+                if (Clipboard.ContainsText() && _editor is not null) _editor.SelectedText = Clipboard.GetText();
                 else SetStatus("В буфере обмена нет текста.");
             }
             catch (Exception ex) { SetStatus("Не удалось вставить: " + ex.Message); }
