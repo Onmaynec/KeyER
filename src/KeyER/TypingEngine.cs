@@ -1,5 +1,7 @@
 namespace KeyER;
 
+public enum TypingOutcome { Idle, Running, Completed, Cancelled, FocusLost, Failed }
+
 public sealed class TargetWindowChangedException : Exception
 {
     public TargetWindowChangedException()
@@ -43,6 +45,7 @@ public sealed partial class TypingEngine
     private readonly Func<Random> _randomFactory;
     private CancellationTokenSource? _cts;
     private bool _paused;
+    private volatile TypingOutcome _outcome = TypingOutcome.Idle;
 
     public event Action<int, int>? ProgressChanged;
     public event Action<string>? StatusChanged;
@@ -60,6 +63,7 @@ public sealed partial class TypingEngine
 
     public bool IsRunning { get { lock (_gate) return _cts is not null; } }
     public bool IsPaused { get { lock (_gate) return _paused; } }
+    public TypingOutcome LastOutcome => _outcome;
 
     public async Task StartAsync(string content, TypingMode mode, TypingProfile sourceProfile,
         IntPtr target, string? sourceFileName = null, string? selectedLanguage = null)
@@ -78,6 +82,7 @@ public sealed partial class TypingEngine
             local = new CancellationTokenSource();
             _cts = local;
             _paused = false;
+            _outcome = TypingOutcome.Running;
         }
 
         try
@@ -85,18 +90,22 @@ public sealed partial class TypingEngine
             StatusChanged?.Invoke("Набор текста...");
             await Task.Run(() => RunAsync(content, mode, profile, target, sourceFileName,
                 selectedLanguage, local.Token));
+            _outcome = TypingOutcome.Completed;
             StatusChanged?.Invoke("Готово. Ввод завершён.");
         }
         catch (OperationCanceledException)
         {
+            _outcome = TypingOutcome.Cancelled;
             StatusChanged?.Invoke("Остановлено пользователем.");
         }
         catch (TargetWindowChangedException ex)
         {
+            _outcome = TypingOutcome.FocusLost;
             StatusChanged?.Invoke(ex.Message);
         }
         catch (Exception ex)
         {
+            _outcome = TypingOutcome.Failed;
             DiagnosticLog.Error("typing", ex);
             StatusChanged?.Invoke("Ошибка ввода: " + ex.Message);
         }
