@@ -50,6 +50,7 @@ public sealed class MainForm : Form
     private readonly TextBox _editor;
     private readonly ComboBox _mode;
     private readonly ComboBox _profiles;
+    private readonly ComboBox _languagePicker;
     private readonly Label _language;
     private readonly Label _stats;
     private readonly Label _status;
@@ -126,11 +127,26 @@ public sealed class MainForm : Form
         settingsButton.Click += (_, _) => OpenSettings();
         toolbar.Controls.AddRange([_mode, _profiles, paste, open, settingsButton]);
 
-        var strip = new Panel { Dock = DockStyle.Top, Height = 31, BackColor = Theme.Background };
-        _language = Theme.Label("Язык: Авто", 8.5F);
+        var strip = new Panel { Dock = DockStyle.Top, Height = 39, BackColor = Theme.Background };
+        _language = Theme.Label("Code", 8.5F);
         _language.ForeColor = Theme.Muted;
-        _language.Location = new Point(17, 7);
+        _language.Location = new Point(17, 10);
         strip.Controls.Add(_language);
+
+        _languagePicker = new ComboBox { Width = 128, Height = 28, Left = 195, Top = 3 };
+        Theme.StyleCombo(_languagePicker);
+        _languagePicker.Margin = Padding.Empty;
+        _languagePicker.Items.AddRange(Enum.GetNames<CodeAnalyzer.Language>());
+        _languagePicker.SelectedItem = _settings.CodeLanguage;
+        if (_languagePicker.SelectedIndex < 0) _languagePicker.SelectedIndex = 0;
+        _languagePicker.SelectedIndexChanged += (_, _) =>
+        {
+            if (_registering || _languagePicker.SelectedItem is not string value) return;
+            _settings.CodeLanguage = value;
+            UpdateStats();
+            PersistSettings();
+        };
+        strip.Controls.Add(_languagePicker);
         _stats = Theme.Label("0 символов", 8.5F);
         _stats.ForeColor = Theme.Muted;
         _stats.AutoSize = false;
@@ -224,10 +240,13 @@ public sealed class MainForm : Form
     {
         _stats.Text = $"{_editor.TextLength:N0} символов · {_editor.Lines.Length:N0} строк";
         var profile = _settings.GetProfile();
+        _languagePicker.Visible = _settings.Mode == TypingMode.Code;
         _language.Text = _settings.Mode == TypingMode.Text
             ? "Text · " + (profile.TextEnter == TextEnterMode.ShiftEnter ? "Shift+Enter" : "Enter")
                 + " · " + (profile.TextTab == TextTabMode.Spaces ? $"Tab = {profile.TabSpaces} пробелов" : "Tab")
-            : "Язык: " + LanguageDetector.Detect(_settings.SourceFileName, _editor.Text);
+            : "Code · " + CodeAnalyzer.Name(CodeAnalyzer.Detect(_settings.SourceFileName,
+                _editor.Text, Enum.TryParse<CodeAnalyzer.Language>(_settings.CodeLanguage,
+                    out var selected) ? selected : CodeAnalyzer.Language.Auto));
     }
 
     private void RefreshProfiles()
@@ -238,6 +257,7 @@ public sealed class MainForm : Form
         _profiles.SelectedItem = _settings.SelectedProfile;
         if (_profiles.SelectedIndex < 0 && _profiles.Items.Count > 0) _profiles.SelectedIndex = 0;
         _mode.SelectedIndex = (int)_settings.Mode;
+        _languagePicker.SelectedItem = _settings.CodeLanguage;
         _registering = false;
         _hotkeys.Text = $"Старт: {Native.HotkeyText(_settings.StartHotkey)}    " +
             $"Пауза: {Native.HotkeyText(_settings.PauseHotkey)}    Стоп: {Native.HotkeyText(_settings.StopHotkey)}";
@@ -252,6 +272,7 @@ public sealed class MainForm : Form
         _pause.Text = _engine.IsPaused ? "▶  Продолжить" : "Ⅱ  Пауза";
         _mode.Enabled = !running;
         _profiles.Enabled = !running;
+        _languagePicker.Enabled = !running;
         _editor.ReadOnly = running;
     }
 
@@ -348,7 +369,8 @@ public sealed class MainForm : Form
         var snapshot = _editor.Text;
         try
         {
-            var activeTask = _engine.StartAsync(snapshot, _settings.Mode, _settings.GetProfile(), target);
+            var activeTask = _engine.StartAsync(snapshot, _settings.Mode, _settings.GetProfile(),
+                target, _settings.SourceFileName, _settings.CodeLanguage);
             UpdateButtons();
             await activeTask;
         }
