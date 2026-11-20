@@ -300,6 +300,7 @@ public sealed partial class TypingEngine
     {
         string[] rows = ["qwertyuiop", "asdfghjkl", "zxcvbnm", "йцукенгшщзхъ", "фывапролджэ", "ячсмитьбю"];
         var lower = char.ToLowerInvariant(source);
+        if (lower == 'ё') return char.IsUpper(source) ? 'Й' : 'й';
         foreach (var row in rows)
         {
             var idx = row.IndexOf(lower);
