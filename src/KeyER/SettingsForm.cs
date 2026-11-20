@@ -198,6 +198,58 @@ public sealed class SettingsForm : Form
         Number(table, "Вероятность проверки строки курсором (%)", 0, 20, 1, p.CursorReviewPercent, v => p.CursorReviewPercent = (int)v);
         Number(table, "Отсчёт при старте с кнопки (сек)", 1, 10, 1, p.StartCountdownSeconds, v => p.StartCountdownSeconds = (int)v);
 
+        var textHeading = Theme.Label("TEXT ENGINE 2.0 — естественный набор", 11F, true);
+        textHeading.ForeColor = Theme.Accent;
+        textHeading.Margin = new Padding(4, 22, 4, 12);
+        var textHeadingRow = table.RowCount++;
+        table.Controls.Add(textHeading, 0, textHeadingRow);
+        table.SetColumnSpan(textHeading, 2);
+
+        Number(table, "Скорость коротких слов (% от базовой)", 40, 250, 5, p.ShortWordSpeedPercent, v => p.ShortWordSpeedPercent = (int)v);
+        Number(table, "Скорость длинных слов (% от базовой)", 40, 250, 5, p.LongWordSpeedPercent, v => p.LongWordSpeedPercent = (int)v);
+        Number(table, "Замедление на цифрах (%)", 100, 350, 5, p.DigitSlowdownPercent, v => p.DigitSlowdownPercent = (int)v);
+        Number(table, "Замедление на пунктуации (%)", 100, 350, 5, p.PunctuationSlowdownPercent, v => p.PunctuationSlowdownPercent = (int)v);
+        Number(table, "Замедление специальных символов (%)", 100, 350, 5, p.SpecialSlowdownPercent, v => p.SpecialSlowdownPercent = (int)v);
+        Number(table, "Ускорение частых сочетаний букв (%)", 0, 65, 1, p.FamiliarPairBoostPercent, v => p.FamiliarPairBoostPercent = (int)v);
+        Number(table, "Сглаживание скорости (% реакции)", 1, 100, 1, p.SpeedSmoothingPercent, v => p.SpeedSmoothingPercent = (int)v);
+        Number(table, "Пауза после предложения, мин. (мс)", 0, 10000, 25, p.SentencePauseMinMilliseconds, v => p.SentencePauseMinMilliseconds = (int)v);
+        Number(table, "Пауза после предложения, макс. (мс)", 0, 15000, 25, p.SentencePauseMaxMilliseconds, v => p.SentencePauseMaxMilliseconds = (int)v);
+        Number(table, "Пауза после абзаца, мин. (мс)", 0, 15000, 25, p.ParagraphPauseMinMilliseconds, v => p.ParagraphPauseMinMilliseconds = (int)v);
+        Number(table, "Пауза после абзаца, макс. (мс)", 0, 20000, 25, p.ParagraphPauseMaxMilliseconds, v => p.ParagraphPauseMaxMilliseconds = (int)v);
+        Number(table, "Перерыв между блоками, мин. (мс)", 0, 30000, 25, p.BlockPauseMinMilliseconds, v => p.BlockPauseMinMilliseconds = (int)v);
+        Number(table, "Перерыв между блоками, макс. (мс)", 0, 60000, 50, p.BlockPauseMaxMilliseconds, v => p.BlockPauseMaxMilliseconds = (int)v);
+        Number(table, "Поздняя коррекция: максимум слов", 1, 6, 1, p.LateCorrectionMaxWords, v => p.LateCorrectionMaxWords = (int)v);
+        Number(table, "Поздняя коррекция: максимум символов", 20, 250, 5, p.LateCorrectionMaxDistance, v => p.LateCorrectionMaxDistance = (int)v);
+        Number(table, "Исправление клавишей Delete (%)", 0, 100, 1, p.DeleteCorrectionPercent, v => p.DeleteCorrectionPercent = (int)v);
+        Number(table, "Исправление выделением (%)", 0, 100, 1, p.SelectionCorrectionPercent, v => p.SelectionCorrectionPercent = (int)v);
+        Number(table, "Количество пробелов вместо Tab", 1, 8, 1, p.TabSpaces, v => p.TabSpaces = (int)v);
+
+        var enterRow = table.RowCount++;
+        table.Controls.Add(Theme.Label("Новая строка в Text", 9.1F), 0, enterRow);
+        var enterCombo = new ComboBox { Width = 190 };
+        Theme.StyleCombo(enterCombo);
+        enterCombo.Items.AddRange(["Enter", "Shift+Enter (для чатов)"]);
+        enterCombo.SelectedIndex = (int)p.TextEnter;
+        enterCombo.SelectedIndexChanged += (_, _) => p.TextEnter = (TextEnterMode)enterCombo.SelectedIndex;
+        table.Controls.Add(enterCombo, 1, enterRow);
+
+        var tabRow = table.RowCount++;
+        table.Controls.Add(Theme.Label("Табуляция в Text", 9.1F), 0, tabRow);
+        var tabCombo = new ComboBox { Width = 190 };
+        Theme.StyleCombo(tabCombo);
+        tabCombo.Items.AddRange(["Нажатие Tab", "Пробелы вместо Tab"]);
+        tabCombo.SelectedIndex = (int)p.TextTab;
+        tabCombo.SelectedIndexChanged += (_, _) => p.TextTab = (TextTabMode)tabCombo.SelectedIndex;
+        table.Controls.Add(tabCombo, 1, tabRow);
+
+        var textNoteRow = table.RowCount++;
+        var textNote = Theme.Label("Для чатов выбирайте Shift+Enter: обычный Enter может отправить сообщение.\\n" +
+            "Паузы и коррекции относятся только к Text; точность зависит от текстового поля.", 8.3F);
+        textNote.ForeColor = Theme.Muted;
+        textNote.Margin = new Padding(4, 14, 4, 12);
+        table.Controls.Add(textNote, 0, textNoteRow);
+        table.SetColumnSpan(textNote, 2);
+
         var editorName = Theme.Label("Профиль редактора для режима Code", 9.2F);
         editorName.Margin = new Padding(4, 12, 4, 10);
         var editorRow = table.RowCount;
