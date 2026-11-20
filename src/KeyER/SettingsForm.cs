@@ -200,13 +200,15 @@ public sealed class SettingsForm : Form
 
         var editorName = Theme.Label("Профиль редактора для режима Code", 9.2F);
         editorName.Margin = new Padding(4, 12, 4, 10);
-        table.Controls.Add(editorName, 0, table.RowCount);
+        var editorRow = table.RowCount;
+        table.RowCount = editorRow + 1;
+        table.Controls.Add(editorName, 0, editorRow);
         var editorCombo = new ComboBox { Width = 190 };
         Theme.StyleCombo(editorCombo);
         editorCombo.Items.AddRange(["Универсальный", "Visual Studio", "VS Code"]);
         editorCombo.SelectedIndex = (int)p.Editor;
         editorCombo.SelectedIndexChanged += (_, _) => p.Editor = (EditorType)editorCombo.SelectedIndex;
-        table.Controls.Add(editorCombo, 1, table.RowCount - 1);
+        table.Controls.Add(editorCombo, 1, editorRow);
 
         var indentCheck = new CheckBox
         {
@@ -217,6 +219,7 @@ public sealed class SettingsForm : Form
         };
         indentCheck.CheckedChanged += (_, _) => p.ClearAutoIndent = indentCheck.Checked;
         var row = table.RowCount;
+        table.RowCount = row + 1;
         table.Controls.Add(indentCheck, 0, row);
         table.SetColumnSpan(indentCheck, 2);
 
@@ -225,6 +228,7 @@ public sealed class SettingsForm : Form
         warning.ForeColor = Theme.Muted;
         warning.Padding = new Padding(4, 13, 0, 6);
         row = table.RowCount;
+        table.RowCount = row + 1;
         table.Controls.Add(warning, 0, row);
         table.SetColumnSpan(warning, 2);
         _fieldsHost.Controls.Add(table);
@@ -235,6 +239,7 @@ public sealed class SettingsForm : Form
         decimal max, decimal step, decimal value, Action<decimal> changed, int decimals = 0)
     {
         var row = table.RowCount;
+        table.RowCount = row + 1;
         var title = Theme.Label(label, 9.1F);
         title.Margin = new Padding(4, 9, 4, 9);
         var box = new NumericUpDown
