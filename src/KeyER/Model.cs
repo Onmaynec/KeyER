@@ -75,9 +75,37 @@ public sealed class AppSettings
         Profiles ??= Defaults();
         Profiles.RemoveAll(p => p is null);
         if (Profiles.Count == 0) Profiles = Defaults();
-        foreach (var profile in Profiles) profile.Validate();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var profile in Profiles)
+        {
+            profile.Validate();
+            var baseName = profile.Name;
+            var suffix = 2;
+            while (!seen.Add(profile.Name))
+                profile.Name = $"{baseName} ({suffix++})";
+        }
+        SelectedProfile ??= "";
+        SourceFileName ??= "";
         if (Profiles.All(p => p.Name != SelectedProfile)) SelectedProfile = Profiles[0].Name;
         if (!Enum.IsDefined(Mode)) Mode = TypingMode.Text;
+        if (!ValidHotkey(StartHotkey)) StartHotkey = Keys.Control | Keys.Alt | Keys.F5;
+        if (!ValidHotkey(PauseHotkey)) PauseHotkey = Keys.Control | Keys.Alt | Keys.F6;
+        if (!ValidHotkey(StopHotkey)) StopHotkey = Keys.Control | Keys.Alt | Keys.F7;
+        if (StartHotkey == PauseHotkey || StartHotkey == StopHotkey || PauseHotkey == StopHotkey)
+        {
+            StartHotkey = Keys.Control | Keys.Alt | Keys.F5;
+            PauseHotkey = Keys.Control | Keys.Alt | Keys.F6;
+            StopHotkey = Keys.Control | Keys.Alt | Keys.F7;
+        }
+    }
+
+    private static bool ValidHotkey(Keys combo)
+    {
+        var key = combo & Keys.KeyCode;
+        var modifiers = combo & Keys.Modifiers;
+        if (key is Keys.None or Keys.ControlKey or Keys.Menu or Keys.ShiftKey or Keys.LWin or Keys.RWin)
+            return false;
+        return modifiers != Keys.None || key is >= Keys.F1 and <= Keys.F24;
     }
 }
 
@@ -87,21 +115,48 @@ public static class SettingsStore
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "KeyER", "settings.json");
 
+    private static string BackupPath => SettingsPath + ".bak";
+
     public static AppSettings Load()
     {
+        if (!File.Exists(SettingsPath) && !File.Exists(BackupPath))
+            return new AppSettings();
+
+        var original = ReadValid(SettingsPath);
+        if (original is not null) return original;
+
+        var backup = ReadValid(BackupPath);
+        if (backup is not null)
+        {
+            MessageBox.Show(
+                "Основной файл настроек повреждён или недоступен.\n" +
+                "Загружена последняя резервная копия. Сохраните настройки для восстановления.",
+                "KeyER — восстановление", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return backup;
+        }
+
+        MessageBox.Show(
+            "Не удалось прочитать настройки KeyER. Загружены стандартные значения.\n" +
+            "Повреждённый файл не удалён.",
+            "KeyER — настройки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        return new AppSettings();
+    }
+
+    private static AppSettings? ReadValid(string path)
+    {
+        if (!File.Exists(path)) return null;
         try
         {
-            if (!File.Exists(SettingsPath)) return new AppSettings();
-            var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath));
-            if (settings is null) return new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path));
+            if (settings is null) return null;
             settings.Validate();
             return settings;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+                                   or ArgumentException or NotSupportedException)
         {
-            MessageBox.Show($"Настройки не удалось загрузить: {ex.Message}\nБудут использованы значения по умолчанию.",
-                "KeyER", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return new AppSettings();
+            DiagnosticLog.Error("settings-load", ex);
+            return null;
         }
     }
 
@@ -109,9 +164,28 @@ public static class SettingsStore
     {
         settings.Validate();
         Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-        var tmp = SettingsPath + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
-        File.Move(tmp, SettingsPath, overwrite: true);
+
+        var temporaryPath = SettingsPath + ".tmp";
+        try
+        {
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(settings,
+                new JsonSerializerOptions { WriteIndented = true }));
+            // File.Replace is atomic on NTFS and retains the previous settings as a backup.
+            if (File.Exists(SettingsPath))
+                File.Replace(temporaryPath, SettingsPath, BackupPath, ignoreMetadataErrors: true);
+            else
+                File.Move(temporaryPath, SettingsPath);
+        }
+        catch (Exception ex)
+        {
+            DiagnosticLog.Error("settings-save", ex);
+            throw;
+        }
+        finally
+        {
+            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
+            catch (IOException) { /* Best-effort cleanup. */ }
+        }
     }
 }
 
