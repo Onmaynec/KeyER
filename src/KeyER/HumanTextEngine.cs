@@ -25,6 +25,7 @@ public sealed partial class TypingEngine
     {
         private readonly TypingProfile _p;
         private readonly Random _rng;
+        private readonly HumanBehaviorModel _behavior;
         private double _current;
         private int _burstRemaining;
         private bool _burst;
@@ -38,10 +39,11 @@ public sealed partial class TypingEngine
             "та", "ва", "го", "ор", "ни", "ла", "от", "за"
         };
 
-        public HumanCadence(TypingProfile profile, Random rng)
+        public HumanCadence(TypingProfile profile, Random rng, HumanBehaviorModel behavior)
         {
             _p = profile;
             _rng = rng;
+            _behavior = behavior;
             _current = 60000.0 / profile.CharactersPerMinute;
         }
 
@@ -71,7 +73,7 @@ public sealed partial class TypingEngine
                 factor *= 1.0 - _p.FamiliarPairBoostPercent / 100.0;
 
             if (_burst) factor *= 0.78;
-            factor *= 1.0 + Math.Min(1.0, sourceIndex / 3000.0) * _p.FatiguePercent / 100.0;
+            factor *= _behavior.NextSpeedFactor();
             factor *= 1 + (_rng.NextDouble() * 2 - 1) * _p.SpeedVariationPercent / 100.0;
 
             var target = (60000.0 / _p.CharactersPerMinute) * factor;
@@ -89,7 +91,8 @@ public sealed partial class TypingEngine
         CancellationToken token)
     {
         var rng = _randomFactory();
-        var rhythm = new HumanCadence(p, rng);
+        var behavior = new HumanBehaviorModel(p, rng);
+        var rhythm = new HumanCadence(p, rng, behavior);
         var wordLengths = GetWordLengths(source);
         DeferredError? pending = null;
         var index = 0;
@@ -196,6 +199,27 @@ public sealed partial class TypingEngine
                 ProgressChanged?.Invoke(index, source.Length);
 
             await TextPauseAsync(source, index, c, p, rng, token);
+
+            // A deliberate review stays inside the most recent ordinary word;
+            // never navigate across line breaks, emoji, tabs or pending corrections.
+            if (pending is null && index > 0 &&
+                (index == source.Length || !IsSafeToNavigate(source[index])) &&
+                IsReviewableCodeUnit(source[index - 1]) && behavior.ShouldReview())
+            {
+                var start = index - 1;
+                while (start >= 0 && IsReviewableCodeUnit(source[start])) start--;
+                await ReviewPreviousAsync(index - start - 1, behavior, target, rng, token);
+            }
+
+            var attention = behavior.NextAttentionBreakMilliseconds();
+            if (attention > 0) await PauseAsync(attention, token);
+
+            if (c is '.' or '!' or '?' && index > 0 &&
+                (index == source.Length || char.IsWhiteSpace(source[index])))
+            {
+                var thinking = behavior.NextThinkingPauseMilliseconds();
+                if (thinking > 0) await PauseAsync(thinking, token);
+            }
         }
 
         if (pending is not null) await FixAsync(pending, p, target, rng, token);
