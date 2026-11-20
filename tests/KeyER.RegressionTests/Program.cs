@@ -93,7 +93,7 @@ internal static class Program
             "This extensive and interesting demonstration includes words and more words to trigger late repairs. " +
             "Программа печатает естественный русский текст при работе с несколькими словами подряд. " +
             "LongerOrdinaryWordsForCorrectionPositions allow repeated checks of the engine. " +
-            "ёЁ Аа and a few more letters then emoji 😀 end.\\n" +
+            "ёЁ Аа and a few more letters then emoji 😀 end.\n" +
             "Second paragraph with many individual words to ensure various errors are repaired correctly.";
 
         // Independently force Backspace, Delete, selection and mixed strategies.
@@ -134,8 +134,8 @@ internal static class Program
 
     private static async Task HumanTextFormats()
     {
-        const string source = "- Купить молоко\\n- Купить хлеб\\n\\nПривет, мир! 😀 café 👨‍👩‍👧‍👦\\n\t* пункт два\\nПоследняя строка.";
-        var expected = source.Replace("\\t", "    ");
+        const string source = "- Купить молоко\n- Купить хлеб\n\nПривет, мир! 😀 café 👨‍👩‍👧‍👦\n\t* пункт два\nПоследняя строка.";
+        var expected = source.Replace("\t", "    ");
         var device = new BufferDevice();
         var profile = Profile(0);
         profile.TextTab = TextTabMode.Spaces;
@@ -173,7 +173,7 @@ internal static class Program
                 intervals.Add(ms);
                 return Task.CompletedTask;
             }, () => new Random(11));
-        const string source = "Hi.\\n\\nThe lengthywordishere and 12345!\\nEnd.";
+        const string source = "Hi.\n\nThe lengthywordishere and 12345!\nEnd.";
         await engine.StartAsync(source, TypingMode.Text, profile, Window);
         Equal(source, device.Text, "timing example output");
         Assert(intervals.Contains(310), "Expected sentence pause");
@@ -417,7 +417,7 @@ internal sealed class BufferDevice : ITypingDevice
         {
             ShiftEnterEvents++;
             RemoveSelection();
-            _buffer.Insert(Cursor++, '\\n');
+            _buffer.Insert(Cursor++, '\n');
         }
         else if (key == Keys.Left)
         {
