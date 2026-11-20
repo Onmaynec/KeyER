@@ -31,6 +31,9 @@ internal static class Program
             await Check("Settings validation handles malformed values", SettingsValidation);
             await Check("IDE 0.4: same-user pipe roundtrip and session invalidation", IdePipeRoundTrip);
             await Check("IDE 0.4: verified mode remains opt-in", IdeSettingsSafety);
+            await Check("Human 0.5: style presets and settings migration", HumanStylePresets);
+            await Check("Human 0.5: concentration/recovery deterministic behavior", HumanFocus);
+            await Check("Human 0.5: reversible lookback in Text and Code (400 runs)", HumanLookbacks);
             Console.WriteLine($"PASS: {_passed} regression checks");
             return 0;
         }
@@ -480,6 +483,122 @@ internal static class Program
         catch (InvalidOperationException) { threw = true; }
         Assert(threw, "Expected failure when target is not foreground.");
         Assert(device.Events == 0, "No keys may be sent to wrong foreground target.");
+    }
+
+    private static Task HumanStylePresets()
+    {
+        var cps = new List<int>();
+        foreach (var style in new[]
+        {
+            HumanStyle.Beginner, HumanStyle.Casual, HumanStyle.Developer,
+            HumanStyle.Professional
+        })
+        {
+            var p = AppSettings.MakeStylePreset("Test", style);
+            Assert(p.Style == style, "Style identity should persist.");
+            Assert(p.FocusMinCharacters <= p.FocusMaxCharacters, "Window bounds.");
+            Assert(p.LookbackPercent > 0, "Style should enable reversible reviews.");
+            cps.Add(p.CharactersPerMinute);
+        }
+        Assert(cps.SequenceEqual(cps.OrderBy(x => x)), "CPM progresses with experience.");
+
+        var original = new TypingProfile
+        {
+            CharactersPerMinute = 777, TypoPercent = 0m,
+            LookbackPercent = 19, Style = HumanStyle.Custom
+        };
+        original.ApplyStyle(HumanStyle.Custom);
+        Assert(original.CharactersPerMinute == 777 && original.LookbackPercent == 19,
+            "Custom must not wipe manual settings.");
+
+        var settings = new AppSettings
+        {
+            SettingsSchemaVersion = 2,
+            SelectedProfile = "My custom",
+            Profiles = [new TypingProfile { Name = "My custom",
+                CharactersPerMinute = 777, Style = HumanStyle.Custom }]
+        };
+        settings.Validate();
+        Assert(settings.SettingsSchemaVersion == 3, "Schema version");
+        Assert(settings.SelectedProfile == "My custom" &&
+               settings.GetProfile().CharactersPerMinute == 777, "Custom profile retained");
+        Assert(Enum.GetNames<HumanStyle>().Skip(1).All(n =>
+            settings.Profiles.Any(x => x.Name == n)), "Preset profiles created");
+        var nProfiles = settings.Profiles.Count;
+        settings.Validate();
+        Assert(settings.Profiles.Count == nProfiles, "Migration must not duplicate.");
+        return Task.CompletedTask;
+    }
+
+    private static Task HumanFocus()
+    {
+        var profile = Profile(0);
+        profile.FocusMinCharacters = 5;
+        profile.FocusMaxCharacters = 5;
+        profile.AttentionBreakPercent = 100;
+        profile.AttentionBreakMinMilliseconds = 600;
+        profile.AttentionBreakMaxMilliseconds = 600;
+        profile.FocusRecoveryPercent = 50;
+        profile.ThinkingPausePercent = 100;
+        profile.ThinkingPauseMinMilliseconds = 400;
+        profile.ThinkingPauseMaxMilliseconds = 400;
+        profile.LookbackPercent = 100;
+        profile.LookbackMaxCharacters = 7;
+        var b = new HumanBehaviorModel(profile, new Random(42));
+        var c = new HumanBehaviorModel(profile, new Random(42));
+        for (var i = 0; i < 70; i++)
+        {
+            Assert(b.NextSpeedFactor() == c.NextSpeedFactor(), "Deterministic focus");
+            Assert(b.NextAttentionBreakMilliseconds() ==
+                   c.NextAttentionBreakMilliseconds(), "Deterministic break");
+            Assert(b.NextThinkingPauseMilliseconds() == 400, "Thinking pause duration.");
+            Assert(b.ShouldReview(), "Forced review.");
+            Assert(b.NextLookbackLength(3) is >= 1 and <= 3, "Bounded caret review.");
+            c.NextThinkingPauseMilliseconds();
+            c.ShouldReview();
+            c.NextLookbackLength(3);
+        }
+        return Task.CompletedTask;
+    }
+
+    private static async Task HumanLookbacks()
+    {
+        const string text =
+            "Hello wonderful software developers! Привет замечательные программисты. " +
+            "Test short words, longLongWordsForCarefulInspection and more.\n" +
+            "Another sentence with 🙂 emoji and big word.\n\n" +
+            "Several paragraphs.\n";
+        const string code =
+            "using System;\nclass Sample {\n    static string TestValue(int value) {\n" +
+            "        // comment with braces { }\n        return \"example\" + value;\n    }\n}\n";
+        for (var style = 0; style < 4; style++)
+        {
+            for (var seed = 0; seed < 50; seed++)
+            {
+                var profile = AppSettings.MakeStylePreset("Test",
+                    (HumanStyle)(style + 1));
+                profile.CharactersPerMinute = 1200;
+                profile.TypoPercent = 18m;
+                profile.FocusMinCharacters = 5;
+                profile.FocusMaxCharacters = 11;
+                profile.AttentionBreakPercent = 100;
+                profile.AttentionBreakMinMilliseconds = 5;
+                profile.AttentionBreakMaxMilliseconds = 10;
+                profile.LookbackPercent = 30;
+                profile.LookbackMaxCharacters = 7;
+                profile.LongPausePercent = 0m;
+                profile.CodeReviewPercent = 20;
+                var a = new BufferDevice();
+                var b = new BufferDevice();
+                await Engine(a, seed).StartAsync(text, TypingMode.Text, profile, Window);
+                await Engine(b, seed).StartAsync(code, TypingMode.Code, profile,
+                    Window, "sample.cs");
+                Equal(text, a.Text, $"Text style={style} seed={seed}");
+                Equal(code, b.Text, $"Code style={style} seed={seed}");
+                Assert(a.Cursor == a.Text.Length && b.Cursor == b.Text.Length,
+                    $"Caret style={style} seed={seed}");
+            }
+        }
     }
 
     private static async Task IdePipeRoundTrip()
