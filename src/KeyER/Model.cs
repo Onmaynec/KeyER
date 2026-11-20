@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 namespace KeyER;
 
 public enum TypingMode { Text, Code }
+public enum HumanStyle { Custom, Beginner, Casual, Developer, Professional }
 public enum EditorType { Generic, VisualStudio, VSCode }
 public enum CodeIntegrityMode { Off, VerifyOnly, VerifyAndRepair }
 public enum TextEnterMode { Enter, ShiftEnter }
@@ -51,6 +52,20 @@ public sealed class TypingProfile
     public TextTabMode TextTab { get; set; } = TextTabMode.Tab;
     public int TabSpaces { get; set; } = 4;
 
+    // v0.5.0: controlled attention/fatigue behaviors; Custom preserves old profiles.
+    public HumanStyle Style { get; set; } = HumanStyle.Custom;
+    public int FocusMinCharacters { get; set; } = 35;
+    public int FocusMaxCharacters { get; set; } = 130;
+    public int FocusRecoveryPercent { get; set; } = 22;
+    public int AttentionBreakPercent { get; set; } = 65;
+    public int AttentionBreakMinMilliseconds { get; set; } = 300;
+    public int AttentionBreakMaxMilliseconds { get; set; } = 1050;
+    public int ThinkingPausePercent { get; set; } = 9;
+    public int ThinkingPauseMinMilliseconds { get; set; } = 200;
+    public int ThinkingPauseMaxMilliseconds { get; set; } = 700;
+    public int LookbackPercent { get; set; } = 2;
+    public int LookbackMaxCharacters { get; set; } = 5;
+
     // Code Intelligence v0.3: separate syntax-aware timing and review.
     public int CodeLinePauseMilliseconds { get; set; } = 90;
     public int CodeFunctionPauseMilliseconds { get; set; } = 520;
@@ -60,6 +75,48 @@ public sealed class TypingProfile
     public int CodeStringSpeedPercent { get; set; } = 85;
     public int CodeCommentSpeedPercent { get; set; } = 130;
     public int CodeReviewPercent { get; set; } = 0;
+
+    public void ApplyStyle(HumanStyle style)
+    {
+        Style = style;
+        switch (style)
+        {
+            case HumanStyle.Beginner:
+                CharactersPerMinute = 130; SpeedVariationPercent = 42;
+                TypoPercent = 6m; LateCorrectionPercent = 28;
+                BurstPercent = 8; FatiguePercent = 28;
+                FocusMinCharacters = 15; FocusMaxCharacters = 50;
+                FocusRecoveryPercent = 36; AttentionBreakPercent = 90;
+                ThinkingPausePercent = 24; LookbackPercent = 12;
+                CodeReviewPercent = 12; break;
+            case HumanStyle.Casual:
+                CharactersPerMinute = 255; SpeedVariationPercent = 30;
+                TypoPercent = 2.8m; LateCorrectionPercent = 45;
+                BurstPercent = 25; FatiguePercent = 15;
+                FocusMinCharacters = 35; FocusMaxCharacters = 100;
+                FocusRecoveryPercent = 22; AttentionBreakPercent = 65;
+                ThinkingPausePercent = 10; LookbackPercent = 4;
+                CodeReviewPercent = 3; break;
+            case HumanStyle.Developer:
+                CharactersPerMinute = 335; SpeedVariationPercent = 22;
+                TypoPercent = 1.5m; LateCorrectionPercent = 55;
+                BurstPercent = 36; FatiguePercent = 11;
+                FocusMinCharacters = 60; FocusMaxCharacters = 150;
+                FocusRecoveryPercent = 25; AttentionBreakPercent = 55;
+                ThinkingPausePercent = 14; LookbackPercent = 5;
+                CodeReviewPercent = 10; break;
+            case HumanStyle.Professional:
+                CharactersPerMinute = 465; SpeedVariationPercent = 12;
+                TypoPercent = 0.6m; LateCorrectionPercent = 65;
+                BurstPercent = 40; FatiguePercent = 6;
+                FocusMinCharacters = 95; FocusMaxCharacters = 220;
+                FocusRecoveryPercent = 16; AttentionBreakPercent = 30;
+                ThinkingPausePercent = 4; LookbackPercent = 1;
+                CodeReviewPercent = 2; break;
+            case HumanStyle.Custom: break; // retaining all existing parameters
+        }
+        Validate();
+    }
 
     public TypingProfile Clone() =>
         JsonSerializer.Deserialize<TypingProfile>(JsonSerializer.Serialize(this))!;
@@ -98,6 +155,18 @@ public sealed class TypingProfile
         if (!Enum.IsDefined(TextEnter)) TextEnter = TextEnterMode.Enter;
         if (!Enum.IsDefined(TextTab)) TextTab = TextTabMode.Tab;
         TabSpaces = Math.Clamp(TabSpaces, 1, 8);
+        if (!Enum.IsDefined(Style)) Style = HumanStyle.Custom;
+        FocusMinCharacters = Math.Clamp(FocusMinCharacters, 5, 1000);
+        FocusMaxCharacters = Math.Clamp(FocusMaxCharacters, FocusMinCharacters, 2000);
+        FocusRecoveryPercent = Math.Clamp(FocusRecoveryPercent, 0, 100);
+        AttentionBreakPercent = Math.Clamp(AttentionBreakPercent, 0, 100);
+        AttentionBreakMinMilliseconds = Math.Clamp(AttentionBreakMinMilliseconds, 0, 15000);
+        AttentionBreakMaxMilliseconds = Math.Clamp(AttentionBreakMaxMilliseconds, AttentionBreakMinMilliseconds, 30000);
+        ThinkingPausePercent = Math.Clamp(ThinkingPausePercent, 0, 100);
+        ThinkingPauseMinMilliseconds = Math.Clamp(ThinkingPauseMinMilliseconds, 0, 15000);
+        ThinkingPauseMaxMilliseconds = Math.Clamp(ThinkingPauseMaxMilliseconds, ThinkingPauseMinMilliseconds, 30000);
+        LookbackPercent = Math.Clamp(LookbackPercent, 0, 30);
+        LookbackMaxCharacters = Math.Clamp(LookbackMaxCharacters, 1, 12);
         CodeLinePauseMilliseconds = Math.Clamp(CodeLinePauseMilliseconds, 0, 5000);
         CodeFunctionPauseMilliseconds = Math.Clamp(CodeFunctionPauseMilliseconds, 0, 10000);
         CodeBlockPauseMilliseconds = Math.Clamp(CodeBlockPauseMilliseconds, 0, 10000);
@@ -135,8 +204,19 @@ public sealed class AppSettings
         new() { Name = "Переписка", CharactersPerMinute = 320, TypoPercent = 2.6m,
             ShortWordSpeedPercent = 125, LongWordSpeedPercent = 95, TextEnter = TextEnterMode.ShiftEnter,
             SentencePauseMinMilliseconds = 90, SentencePauseMaxMilliseconds = 320,
-            BlockPauseMinMilliseconds = 550, BlockPauseMaxMilliseconds = 1100 }
+            BlockPauseMinMilliseconds = 550, BlockPauseMaxMilliseconds = 1100 },
+        MakeStylePreset("Beginner", HumanStyle.Beginner),
+        MakeStylePreset("Casual", HumanStyle.Casual),
+        MakeStylePreset("Developer", HumanStyle.Developer),
+        MakeStylePreset("Professional", HumanStyle.Professional)
     ];
+
+    public static TypingProfile MakeStylePreset(string name, HumanStyle style)
+    {
+        var profile = new TypingProfile { Name = name };
+        profile.ApplyStyle(style);
+        return profile;
+    }
 
     public TypingProfile GetProfile() =>
         Profiles.FirstOrDefault(x => x.Name == SelectedProfile) ?? Profiles[0];
@@ -161,6 +241,20 @@ public sealed class AppSettings
                     Profiles.Add(template);
             }
             SettingsSchemaVersion = 2;
+        }
+        if (SettingsSchemaVersion < 3)
+        {
+            // Add style presets once, without overwriting custom profiles or selections.
+            foreach (var name in new[] { "Beginner", "Casual", "Developer", "Professional" })
+            {
+                if (Profiles.All(p => !string.Equals(p.Name, name,
+                    StringComparison.OrdinalIgnoreCase)))
+                {
+                    var style = Enum.Parse<HumanStyle>(name);
+                    Profiles.Add(MakeStylePreset(name, style));
+                }
+            }
+            SettingsSchemaVersion = 3;
         }
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var profile in Profiles)
