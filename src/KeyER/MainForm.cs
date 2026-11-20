@@ -343,8 +343,12 @@ public sealed class MainForm : Form
         }
         _progress.Value = 0;
         var snapshot = _editor.Text;
-        UpdateButtons();
-        try { await _engine.StartAsync(snapshot, _settings.Mode, _settings.GetProfile(), target); }
+        try
+        {
+            var activeTask = _engine.StartAsync(snapshot, _settings.Mode, _settings.GetProfile(), target);
+            UpdateButtons();
+            await activeTask;
+        }
         catch (Exception ex) { SetStatus(ex.Message); }
         finally { UpdateButtons(); }
     }
