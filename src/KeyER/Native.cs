@@ -56,6 +56,12 @@ internal static class Native
     public static extern bool IsWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
+    public static bool IsPressed(Keys key) =>
+        (GetAsyncKeyState((int)(key & Keys.KeyCode)) & 0x8000) != 0;
+
+    [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     public static bool IsOwnWindow(IntPtr hWnd)
@@ -76,10 +82,26 @@ internal static class Native
 
     private static void Send(params INPUT[] inputs)
     {
-        // Marshal.SizeOf<INPUT>() is 40 bytes on x64, including the Win32 union alignment.
-        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        if (sent != inputs.Length)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows отклонила ввод. Возможно, целевое окно запущено с правами администратора.");
+        // INPUT includes native union alignment; Marshal.SizeOf is architecture-aware.
+        var size = Marshal.SizeOf<INPUT>();
+        var sent = SendInput((uint)inputs.Length, inputs, size);
+        if (sent == inputs.Length) return;
+
+        var error = Marshal.GetLastWin32Error();
+
+        // SendInput normally inserts the entire batch, but in a partial write a
+        // key-down might have been delivered without key-up. Best-effort release.
+        var release = inputs.Take((int)sent)
+            .Where(input => input.type == INPUT_KEYBOARD &&
+                            (input.data.ki.dwFlags & KEYEVENTF_KEYUP) == 0)
+            .Select(input => MakeKey(input.data.ki.wVk, input.data.ki.wScan,
+                input.data.ki.dwFlags | KEYEVENTF_KEYUP))
+            .Reverse()
+            .ToArray();
+        if (release.Length > 0)
+            _ = SendInput((uint)release.Length, release, size);
+
+        throw new Win32Exception(error, "Windows не приняла нажатие клавиши. Возможно, окно запущено с правами администратора.");
     }
 
     public static void TypeUnicode(char codeUnit) => Send(
