@@ -105,6 +105,7 @@ public sealed class MainForm : Form
         {
             if (_registering || _profiles.SelectedItem is not string value) return;
             _settings.SelectedProfile = value;
+            UpdateStats();
             PersistSettings();
         };
 
@@ -222,8 +223,10 @@ public sealed class MainForm : Form
     private void UpdateStats()
     {
         _stats.Text = $"{_editor.TextLength:N0} символов · {_editor.Lines.Length:N0} строк";
+        var profile = _settings.GetProfile();
         _language.Text = _settings.Mode == TypingMode.Text
-            ? "Режим: обычный текст"
+            ? "Text · " + (profile.TextEnter == TextEnterMode.ShiftEnter ? "Shift+Enter" : "Enter")
+                + " · " + (profile.TextTab == TextTabMode.Spaces ? $"Tab = {profile.TabSpaces} пробелов" : "Tab")
             : "Язык: " + LanguageDetector.Detect(_settings.SourceFileName, _editor.Text);
     }
 
