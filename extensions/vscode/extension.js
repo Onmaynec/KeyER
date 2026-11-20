@@ -189,6 +189,7 @@ function connect() {
     if (disposed || socket) return;
 
     const connection = net.createConnection(PIPE);
+    connection.setEncoding('utf8'); // Preserve Unicode across network chunk boundaries.
     socket = connection;
     buffer = '';
 
