@@ -107,7 +107,7 @@ test('VS Code extension: blank preflight, verification, opt-in repair, focus inv
         socket.emit('connect');
         assert.equal(socket.messages[0].type, 'hello');
 
-        const p1 = await request(1, 'prepare', { sourceLength: 13 });
+        const p1 = await request(1, 'prepare', { sourceLength: 'Hello, мир!\n'.length });
         assert.equal(p1.ok, true);
         assert.ok(p1.sessionId);
         assert.equal(p1.editor.language, 'csharp');
