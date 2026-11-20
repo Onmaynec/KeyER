@@ -127,12 +127,18 @@ internal static class Native
     {
         var key = (uint)(keys & Keys.KeyCode);
         if (key == 0) return false;
-        uint modifiers = 0x4000; // MOD_NOREPEAT
-        if ((keys & Keys.Control) != 0) modifiers |= 0x0002;
-        if ((keys & Keys.Alt) != 0) modifiers |= 0x0001;
-        if ((keys & Keys.Shift) != 0) modifiers |= 0x0004;
-        if ((keys & Keys.LWin) != 0) modifiers |= 0x0008;
-        return RegisterHotKey(hwnd, id, modifiers, key);
+        return RegisterHotKey(hwnd, id, HotkeyModifiers(keys), key);
+    }
+
+    // Keys.LWin is a key code, NOT a flag. Bitwise-AND with it incorrectly
+    // interpreted e.g. F5 as Win+F5, making all default hotkeys unusable.
+    internal static uint HotkeyModifiers(Keys keys)
+    {
+        uint flags = 0x4000; // MOD_NOREPEAT
+        if ((keys & Keys.Control) == Keys.Control) flags |= 0x0002;
+        if ((keys & Keys.Alt) == Keys.Alt) flags |= 0x0001;
+        if ((keys & Keys.Shift) == Keys.Shift) flags |= 0x0004;
+        return flags;
     }
 
     public static string HotkeyText(Keys keys)
@@ -141,7 +147,6 @@ internal static class Native
         if ((keys & Keys.Control) != 0) parts.Add("Ctrl");
         if ((keys & Keys.Alt) != 0) parts.Add("Alt");
         if ((keys & Keys.Shift) != 0) parts.Add("Shift");
-        if ((keys & Keys.LWin) != 0) parts.Add("Win");
         parts.Add((keys & Keys.KeyCode).ToString());
         return string.Join("+", parts);
     }
