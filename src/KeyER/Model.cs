@@ -92,6 +92,7 @@ public sealed class TypingProfile
 
 public sealed class AppSettings
 {
+    public int SettingsSchemaVersion { get; set; } = 1;
     public string SelectedProfile { get; set; } = "Сбалансированный";
     public TypingMode Mode { get; set; } = TypingMode.Text;
     public string SourceFileName { get; set; } = "";
@@ -125,6 +126,19 @@ public sealed class AppSettings
         Profiles ??= Defaults();
         Profiles.RemoveAll(p => p is null);
         if (Profiles.Count == 0) Profiles = Defaults();
+        if (SettingsSchemaVersion < 2)
+        {
+            // Existing 0.1.x installations keep their profiles and get new Text
+            // presets exactly once; customized profiles are never overwritten.
+            foreach (var template in Defaults().Where(p =>
+                p.Name is "Обычный текст" or "Переписка"))
+            {
+                if (!Profiles.Any(p => string.Equals(p.Name, template.Name,
+                    StringComparison.OrdinalIgnoreCase)))
+                    Profiles.Add(template);
+            }
+            SettingsSchemaVersion = 2;
+        }
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var profile in Profiles)
         {
