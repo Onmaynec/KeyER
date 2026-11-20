@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Text.Json;
 
 namespace KeyER;
 
@@ -47,6 +48,12 @@ public sealed class MainForm : Form
 {
     private AppSettings _settings;
     private readonly TypingEngine _engine = new();
+    private readonly IdeBridgeServer _ideBridge = new();
+    private readonly System.Windows.Forms.Timer _visualStudioMonitor = new() { Interval = 300 };
+    private VisualStudioDteSession? _visualStudioSession;
+    private string? _vsCodeSessionId;
+    private bool _ideBusy;
+    private CancellationTokenSource? _idePreflight;
     private readonly TextBox _editor;
     private readonly ComboBox _mode;
     private readonly ComboBox _profiles;
@@ -218,11 +225,47 @@ public sealed class MainForm : Form
         _engine.ProgressChanged += (completed, total) => Ui(() =>
             _progress.Value = Math.Clamp(total == 0 ? 0 : (int)((long)completed * 1000 / total), 0, 1000));
 
-        Shown += (_, _) => RegisterHotkeys(showWarnings: true);
+        _ideBridge.ConnectionChanged += connected => Ui(() =>
+        {
+            if (!connected && _vsCodeSessionId is not null)
+            {
+                _engine.Stop();
+                SetStatus("VS Code отключился. Набор остановлен.");
+            }
+            else if (connected && !_engine.IsRunning && !_ideBusy)
+                SetStatus("VS Code: расширение KeyER подключено.");
+        });
+        _ideBridge.SessionInvalidated += session => Ui(() =>
+        {
+            if (_vsCodeSessionId == session)
+            {
+                _engine.Stop();
+                SetStatus("Редактор VS Code изменился — набор остановлен.");
+            }
+        });
+        _visualStudioMonitor.Tick += (_, _) =>
+        {
+            if (_visualStudioSession is not null && _engine.IsRunning &&
+                !_visualStudioSession.IsStillActive())
+            {
+                _engine.Stop();
+                SetStatus("Активный документ Visual Studio изменился. Набор остановлен.");
+            }
+        };
+
+        Shown += (_, _) =>
+        {
+            RegisterHotkeys(showWarnings: true);
+            _ideBridge.Start();
+        };
         FormClosing += (_, _) =>
         {
+            _idePreflight?.Cancel();
             _countdownCts?.Cancel();
             _engine.Stop();
+            _visualStudioMonitor.Stop();
+            _visualStudioMonitor.Dispose();
+            _ideBridge.Dispose();
             UnregisterHotkeys();
         };
     }
@@ -266,14 +309,14 @@ public sealed class MainForm : Form
     private void UpdateButtons()
     {
         var running = _engine.IsRunning;
-        _start.Enabled = !running && !_countingDown;
+        _start.Enabled = !running && !_countingDown && !_ideBusy;
         _pause.Enabled = running;
-        _stop.Enabled = running || _countingDown;
+        _stop.Enabled = running || _countingDown || _ideBusy;
         _pause.Text = _engine.IsPaused ? "▶  Продолжить" : "Ⅱ  Пауза";
-        _mode.Enabled = !running;
-        _profiles.Enabled = !running;
-        _languagePicker.Enabled = !running;
-        _editor.ReadOnly = running;
+        _mode.Enabled = !running && !_ideBusy;
+        _profiles.Enabled = !running && !_ideBusy;
+        _languagePicker.Enabled = !running && !_ideBusy;
+        _editor.ReadOnly = running || _ideBusy;
     }
 
     private void OpenFile()
@@ -301,7 +344,7 @@ public sealed class MainForm : Form
 
     private void OpenSettings()
     {
-        if (_engine.IsRunning || _countingDown)
+        if (_engine.IsRunning || _countingDown || _ideBusy)
         {
             SetStatus("Сначала остановите текущий набор.");
             return;
@@ -327,7 +370,7 @@ public sealed class MainForm : Form
 
     private async Task StartWithCountdownAsync()
     {
-        if (_engine.IsRunning || _countingDown) return;
+        if (_engine.IsRunning || _countingDown || _ideBusy) return;
         _countdownCts = new CancellationTokenSource();
         _countingDown = true;
         UpdateButtons();
@@ -354,7 +397,7 @@ public sealed class MainForm : Form
 
     private async Task StartNowAsync(IntPtr target)
     {
-        if (_engine.IsRunning) return;
+        if (_engine.IsRunning || _ideBusy) return;
         if (string.IsNullOrEmpty(_editor.Text))
         {
             SetStatus("Сначала вставьте или откройте текст.");
@@ -365,22 +408,143 @@ public sealed class MainForm : Form
             SetStatus("Курсор должен быть в окне другого приложения. Набор не запущен.");
             return;
         }
+
+        _ideBusy = true;
+        _idePreflight = new CancellationTokenSource();
         _progress.Value = 0;
+        UpdateButtons();
         var snapshot = _editor.Text;
+        var expected = snapshot.Replace("\r\n", "\n").Replace('\r', '\n');
+        var profile = _settings.GetProfile().Clone();
+
         try
         {
-            var activeTask = _engine.StartAsync(snapshot, _settings.Mode, _settings.GetProfile(),
-                target, _settings.SourceFileName, _settings.CodeLanguage);
+            if (_settings.Mode == TypingMode.Code && profile.CodeIntegrity != CodeIntegrityMode.Off)
+            {
+                var process = Native.GetWindowProcessName(target) ?? "";
+                if (process.Equals("Code", StringComparison.OrdinalIgnoreCase) ||
+                    process.StartsWith("Code - Insiders", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_ideBridge.IsConnected)
+                    {
+                        SetStatus("VS Code: установите расширение KeyER IDE и перезапустите редактор. " +
+                            "Или отключите проверку IDE в профиле.");
+                        return;
+                    }
+
+                    var preflight = await _ideBridge.RequestAsync("prepare",
+                        new { sourceLength = expected.Length }, _idePreflight.Token);
+                    if (!preflight.GetProperty("ok").GetBoolean())
+                    {
+                        SetStatus("VS Code: " + BridgeError(preflight));
+                        return;
+                    }
+                    _vsCodeSessionId = preflight.GetProperty("sessionId").GetString();
+                    SetStatus("VS Code: пустой редактор подтверждён; запускаю проверяемый набор.");
+                }
+                else if (process.Equals("devenv", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!VisualStudioDteSession.TryPrepare(target,
+                        out _visualStudioSession, out var diagnostic))
+                    {
+                        SetStatus(diagnostic);
+                        return;
+                    }
+                    _visualStudioMonitor.Start();
+                }
+                else
+                {
+                    SetStatus("Проверка IDE работает только в VS Code и Visual Studio. " +
+                        "Для других программ отключите её в профиле.");
+                    return;
+                }
+
+                if (Native.GetForegroundWindow() != target)
+                {
+                    SetStatus("Активное окно изменилось до начала набора.");
+                    return;
+                }
+            }
+
+            var activeTask = _engine.StartAsync(snapshot, _settings.Mode, profile, target,
+                _settings.SourceFileName, _settings.CodeLanguage);
             UpdateButtons();
             await activeTask;
+
+            _visualStudioMonitor.Stop();
+            if (_vsCodeSessionId is not null)
+            {
+                var sessionId = _vsCodeSessionId;
+                if (_engine.LastOutcome == TypingOutcome.Completed)
+                {
+                    SetStatus("VS Code: сравниваю результат с исходным кодом...");
+                    try
+                    {
+                        var result = await _ideBridge.RequestAsync("complete",
+                            new { sessionId, source = expected,
+                                strategy = profile.CodeIntegrity == CodeIntegrityMode.VerifyAndRepair
+                                    ? "repair" : "verify" }, timeoutMilliseconds: 12000);
+                        if (!result.GetProperty("ok").GetBoolean())
+                            SetStatus("VS Code: " + BridgeError(result));
+                        else if (result.GetProperty("matched").GetBoolean())
+                            SetStatus(result.GetProperty("repaired").GetBoolean()
+                                ? "VS Code: код исправлен и совпадает с исходным."
+                                : "VS Code: код полностью совпадает с исходным.");
+                        else
+                            SetStatus("VS Code: код отличается от исходника. " +
+                                "Выберите разрешённое исправление в настройках профиля.");
+                    }
+                    catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException)
+                    {
+                        DiagnosticLog.Error("vscode-complete", ex);
+                        SetStatus("VS Code: не удалось завершить сверку. Проверьте редактор вручную.");
+                    }
+                }
+                else
+                {
+                    try { await _ideBridge.RequestAsync("cancel", new { sessionId },
+                        timeoutMilliseconds: 1200); }
+                    catch { /* Extension may already have invalidated the session. */ }
+                }
+            }
+            else if (_visualStudioSession is not null &&
+                     _engine.LastOutcome == TypingOutcome.Completed)
+            {
+                var (matched, repaired, message) =
+                    _visualStudioSession.Finish(expected, profile.CodeIntegrity);
+                SetStatus(message);
+            }
         }
-        catch (Exception ex) { SetStatus(ex.Message); }
-        finally { UpdateButtons(); }
+        catch (OperationCanceledException)
+        {
+            SetStatus("Запуск отменён.");
+        }
+        catch (Exception ex)
+        {
+            DiagnosticLog.Error("ide-start", ex);
+            SetStatus("Не удалось начать набор: " + ex.Message);
+        }
+        finally
+        {
+            _visualStudioMonitor.Stop();
+            _vsCodeSessionId = null;
+            _visualStudioSession = null;
+            _ideBusy = false;
+            _idePreflight.Dispose();
+            _idePreflight = null;
+            UpdateButtons();
+        }
     }
+
+    private static string BridgeError(JsonElement response) =>
+        response.TryGetProperty("error", out var error)
+            ? error.GetString() ?? "Неизвестная ошибка редактора."
+            : "Неизвестная ошибка редактора.";
 
     private void StopTyping()
     {
         _countdownCts?.Cancel();
+        _idePreflight?.Cancel();
         _engine.Stop();
         UpdateButtons();
     }
@@ -418,7 +582,7 @@ public sealed class MainForm : Form
             switch (m.WParam.ToInt32())
             {
                 case 1:
-                    if (!_countingDown) _ = StartNowAsync(Native.GetForegroundWindow());
+                    if (!_countingDown && !_ideBusy) _ = StartNowAsync(Native.GetForegroundWindow());
                     break;
                 case 2:
                     _engine.TogglePause();
