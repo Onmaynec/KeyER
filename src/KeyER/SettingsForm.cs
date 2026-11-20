@@ -185,6 +185,54 @@ public sealed class SettingsForm : Form
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 37));
 
         var p = _selected;
+        var styleRow = table.RowCount++;
+        table.Controls.Add(Theme.Label("Human Behavior 2.0 — стиль набора", 9.1F, true), 0, styleRow);
+        var stylePicker = new ComboBox { Width = 190 };
+        Theme.StyleCombo(stylePicker);
+        stylePicker.Items.AddRange(Enum.GetNames<HumanStyle>());
+        stylePicker.SelectedIndex = (int)p.Style;
+        stylePicker.SelectedIndexChanged += (_, _) =>
+        {
+            if (stylePicker.SelectedIndex < 0) return;
+            p.ApplyStyle((HumanStyle)stylePicker.SelectedIndex);
+            BeginInvoke(new Action(RebuildFields));
+        };
+        table.Controls.Add(stylePicker, 1, styleRow);
+
+        var styleNoteRow = table.RowCount++;
+        var styleNote = Theme.Label(
+            "Beginner: медленно, часто исправляет ошибки. Casual: обычный набор. " +
+            "Developer: ритм программиста. Professional: быстро, редко ошибается. " +
+            "Custom: ручные параметры (без сброса).", 8.3F);
+        styleNote.ForeColor = Theme.Muted;
+        styleNote.MaximumSize = new Size(450, 0);
+        styleNote.Margin = new Padding(4, 8, 4, 12);
+        table.Controls.Add(styleNote, 0, styleNoteRow);
+        table.SetColumnSpan(styleNote, 2);
+
+        Number(table, "Окно концентрации: минимум символов", 5, 1000, 5, p.FocusMinCharacters,
+            v => p.FocusMinCharacters = (int)v);
+        Number(table, "Окно концентрации: максимум символов", 5, 2000, 5, p.FocusMaxCharacters,
+            v => p.FocusMaxCharacters = (int)v);
+        Number(table, "Восстановление после паузы (%)", 0, 100, 1, p.FocusRecoveryPercent,
+            v => p.FocusRecoveryPercent = (int)v);
+        Number(table, "Вероятность перерыва между периодами (%)", 0, 100, 1, p.AttentionBreakPercent,
+            v => p.AttentionBreakPercent = (int)v);
+        Number(table, "Перерыв: минимальная длина (мс)", 0, 15000, 25, p.AttentionBreakMinMilliseconds,
+            v => p.AttentionBreakMinMilliseconds = (int)v);
+        Number(table, "Перерыв: максимальная длина (мс)", 0, 30000, 25, p.AttentionBreakMaxMilliseconds,
+            v => p.AttentionBreakMaxMilliseconds = (int)v);
+        Number(table, "Вероятность паузы на обдумывание (%)", 0, 100, 1, p.ThinkingPausePercent,
+            v => p.ThinkingPausePercent = (int)v);
+        Number(table, "Обдумывание: минимум (мс)", 0, 15000, 25, p.ThinkingPauseMinMilliseconds,
+            v => p.ThinkingPauseMinMilliseconds = (int)v);
+        Number(table, "Обдумывание: максимум (мс)", 0, 30000, 25, p.ThinkingPauseMaxMilliseconds,
+            v => p.ThinkingPauseMaxMilliseconds = (int)v);
+        Number(table, "Шанс просмотра предыдущего слова (%)", 0, 30, 1, p.LookbackPercent,
+            v => p.LookbackPercent = (int)v);
+        Number(table, "Просмотр: максимум символов", 1, 12, 1, p.LookbackMaxCharacters,
+            v => p.LookbackMaxCharacters = (int)v);
+
         Number(table, "Скорость набора (символов в минуту)", 20, 1200, 1, p.CharactersPerMinute, v => p.CharactersPerMinute = (int)v);
         Number(table, "Колебания скорости (%)", 0, 95, 1, p.SpeedVariationPercent, v => p.SpeedVariationPercent = (int)v);
         Number(table, "Вероятность опечатки (%)", 0, 30, 0.1m, p.TypoPercent, v => p.TypoPercent = v, 1);
