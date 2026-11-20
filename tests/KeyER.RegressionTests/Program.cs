@@ -12,6 +12,9 @@ internal static class Program
             await Check("Unicode, line breaks and tabs", UnicodeAndLines);
             await Check("Text: random typo correction (100 seeds)", RandomTypos);
             await Check("Code: no unexpected changes in plain editor", CodeAndLines);
+            await Check("Text v0.2: delayed multiword repairs and all correction strategies", HumanTextCorrections);
+            await Check("Text v0.2: chat, tabs, lists, mixed Unicode", HumanTextFormats);
+            await Check("Text v0.2: smooth speed and paragraph breaks", HumanTextTiming);
             await Check("Foreground loss prevents further keystrokes", ForegroundLoss);
             await Check("Stop cancels future keystrokes", CancelDuringTyping);
             await Check("Pause/resume and stop during pause", PauseAndStop);
@@ -82,6 +85,112 @@ internal static class Program
             Equal(source.Replace("\r\n", "\n"), device.Text, $"seed={seed}");
             Assert(device.Cursor == device.Text.Length, $"Cursor position seed={seed}");
         }
+    }
+
+    private static async Task HumanTextCorrections()
+    {
+        const string sample =
+            "This extensive and interesting demonstration includes words and more words to trigger late repairs. " +
+            "Программа печатает естественный русский текст при работе с несколькими словами подряд. " +
+            "LongerOrdinaryWordsForCorrectionPositions allow repeated checks of the engine. " +
+            "ёЁ Аа and a few more letters then emoji 😀 end.\\n" +
+            "Second paragraph with many individual words to ensure various errors are repaired correctly.";
+
+        // Independently force Backspace, Delete, selection and mixed strategies.
+        for (var strategy = 0; strategy < 4; strategy++)
+        {
+            var totalRepairs = 0;
+            var totalDelete = 0;
+            var totalSelection = 0;
+            var totalBackspace = 0;
+
+            for (var seed = 0; seed < 100; seed++)
+            {
+                var device = new BufferDevice();
+                var profile = Profile(30m);
+                profile.LateCorrectionPercent = 100;
+                profile.LateCorrectionMaxWords = 3;
+                profile.LateCorrectionMaxDistance = 180;
+                profile.DeleteCorrectionPercent = strategy == 1 ? 100 : strategy == 3 ? 30 : 0;
+                profile.SelectionCorrectionPercent = strategy == 2 ? 100 : strategy == 3 ? 30 : 0;
+                var engine = Engine(device, seed);
+                await engine.StartAsync(sample, TypingMode.Text, profile, Window);
+                Equal(sample, device.Text, $"HumanText strategy={strategy}, seed={seed}");
+                Assert(device.Cursor == device.Text.Length, $"Cursor strategy={strategy}, seed={seed}");
+                totalRepairs += device.DeleteEvents + device.SelectionEvents + device.BackspaceEvents;
+                totalDelete += device.DeleteEvents;
+                totalSelection += device.SelectionEvents;
+                totalBackspace += device.BackspaceEvents;
+            }
+
+            Assert(totalRepairs > 0, "Expected actual corrections to be simulated.");
+            if (strategy == 0) Assert(totalBackspace > 0, "Backspace must be exercised.");
+            if (strategy == 1) Assert(totalDelete > 0, "Delete must be exercised.");
+            if (strategy == 2) Assert(totalSelection > 0, "Shift+Left selection must be exercised.");
+            if (strategy == 3) Assert(totalDelete > 0 && totalSelection > 0 && totalBackspace > 0,
+                "All repair strategies should be exercised in mixed mode.");
+        }
+    }
+
+    private static async Task HumanTextFormats()
+    {
+        const string source = "- Купить молоко\\n- Купить хлеб\\n\\nПривет, мир! 😀 café 👨‍👩‍👧‍👦\\n\t* пункт два\\nПоследняя строка.";
+        var expected = source.Replace("\\t", "    ");
+        var device = new BufferDevice();
+        var profile = Profile(0);
+        profile.TextTab = TextTabMode.Spaces;
+        profile.TabSpaces = 4;
+        profile.TextEnter = TextEnterMode.ShiftEnter;
+        await Engine(device).StartAsync(source, TypingMode.Text, profile, Window);
+        Equal(expected, device.Text, "chat formatted text");
+        Assert(device.ShiftEnterEvents == 5, $"Chat newline shortcut count: {device.ShiftEnterEvents}");
+        Assert(device.Cursor == device.Text.Length, "Chat caret at end");
+
+        var noErrors = new BufferDevice();
+        await Engine(noErrors).StartAsync(source, TypingMode.Text, Profile(0), Window);
+        Equal(source, noErrors.Text, "default literal tabs and newlines");
+        Assert(noErrors.Events == source.Length, "0% errors should not introduce extra keyboard events");
+    }
+
+    private static async Task HumanTextTiming()
+    {
+        var intervals = new List<int>();
+        var device = new BufferDevice();
+        var profile = Profile(0);
+        profile.SpeedSmoothingPercent = 18;
+        profile.LongPausePercent = 0;
+        profile.ParagraphPauseMinMilliseconds = 220;
+        profile.ParagraphPauseMaxMilliseconds = 220;
+        profile.BlockPauseMinMilliseconds = 700;
+        profile.BlockPauseMaxMilliseconds = 700;
+        profile.SentencePauseMinMilliseconds = 310;
+        profile.SentencePauseMaxMilliseconds = 310;
+
+        var engine = new TypingEngine(device,
+            (ms, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                intervals.Add(ms);
+                return Task.CompletedTask;
+            }, () => new Random(11));
+        const string source = "Hi.\\n\\nThe lengthywordishere and 12345!\\nEnd.";
+        await engine.StartAsync(source, TypingMode.Text, profile, Window);
+        Equal(source, device.Text, "timing example output");
+        Assert(intervals.Contains(310), "Expected sentence pause");
+        Assert(intervals.Contains(700), "Expected block pause");
+        Assert(intervals.Any(x => x != intervals[0]), "Expected non-constant typing interval");
+
+        // Deterministic input produces the same pause series.
+        var otherIntervals = new List<int>();
+        var another = new TypingEngine(new BufferDevice(),
+            (ms, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                otherIntervals.Add(ms);
+                return Task.CompletedTask;
+            }, () => new Random(11));
+        await another.StartAsync(source, TypingMode.Text, profile, Window);
+        Assert(intervals.SequenceEqual(otherIntervals), "Typing intervals should reproduce with the same seed.");
     }
 
     private static async Task CodeAndLines()
@@ -236,14 +345,35 @@ internal sealed class BufferDevice : ITypingDevice
         OnEvent?.Invoke();
     }
 
+    private int? _selectionAnchor;
+    public int DeleteEvents { get; private set; }
+    public int BackspaceEvents { get; private set; }
+    public int SelectionEvents { get; private set; }
+    public int ShiftEnterEvents { get; private set; }
+
+    private void RemoveSelection()
+    {
+        if (_selectionAnchor is null) return;
+        var start = Math.Min(Cursor, _selectionAnchor.Value);
+        var end = Math.Max(Cursor, _selectionAnchor.Value);
+        _buffer.Remove(start, end - start);
+        Cursor = start;
+        _selectionAnchor = null;
+    }
+
     public void TypeUnicode(char character)
     {
+        RemoveSelection();
         _buffer.Insert(Cursor++, character);
         Touched();
     }
 
     public void PressKey(Keys key)
     {
+        if (key is Keys.Enter or Keys.Tab or Keys.Back or Keys.Delete)
+            RemoveSelection();
+        else
+            _selectionAnchor = null;
         switch (key)
         {
             case Keys.Enter:
@@ -253,9 +383,11 @@ internal sealed class BufferDevice : ITypingDevice
                 _buffer.Insert(Cursor++, '\t');
                 break;
             case Keys.Back:
+                BackspaceEvents++;
                 if (Cursor > 0) _buffer.Remove(--Cursor, 1);
                 break;
             case Keys.Delete:
+                DeleteEvents++;
                 if (Cursor < _buffer.Length) _buffer.Remove(Cursor, 1);
                 break;
             case Keys.Left:
@@ -276,6 +408,24 @@ internal sealed class BufferDevice : ITypingDevice
         Touched();
     }
 
-    public void PressChord(Keys modifier, Keys key) =>
-        throw new NotSupportedException($"Unexpected chord: {modifier}+{key}");
+    public void PressChord(Keys modifier, Keys key)
+    {
+        if (modifier != Keys.ShiftKey)
+            throw new NotSupportedException($"Unexpected chord: {modifier}+{key}");
+
+        if (key == Keys.Enter)
+        {
+            ShiftEnterEvents++;
+            RemoveSelection();
+            _buffer.Insert(Cursor++, '\\n');
+        }
+        else if (key == Keys.Left)
+        {
+            SelectionEvents++;
+            _selectionAnchor ??= Cursor;
+            if (Cursor > 0) Cursor--;
+        }
+        else throw new NotSupportedException($"Unexpected chord: {modifier}+{key}");
+        Touched();
+    }
 }
