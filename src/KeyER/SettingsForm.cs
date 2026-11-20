@@ -250,6 +250,40 @@ public sealed class SettingsForm : Form
         table.Controls.Add(textNote, 0, textNoteRow);
         table.SetColumnSpan(textNote, 2);
 
+        var codeTitle = Theme.Label("CODE INTELLIGENCE 0.3 — синтаксический ритм", 11F, true);
+        codeTitle.ForeColor = Theme.Accent;
+        codeTitle.Margin = new Padding(4, 22, 4, 12);
+        var codeTitleRow = table.RowCount++;
+        table.Controls.Add(codeTitle, 0, codeTitleRow);
+        table.SetColumnSpan(codeTitle, 2);
+
+        Number(table, "Code: пауза между строками (мс)", 0, 5000, 25, p.CodeLinePauseMilliseconds,
+            v => p.CodeLinePauseMilliseconds = (int)v);
+        Number(table, "Code: пауза перед классом/функцией (мс)", 0, 10000, 25, p.CodeFunctionPauseMilliseconds,
+            v => p.CodeFunctionPauseMilliseconds = (int)v);
+        Number(table, "Code: пауза перед блоком/ветвлением (мс)", 0, 10000, 25, p.CodeBlockPauseMilliseconds,
+            v => p.CodeBlockPauseMilliseconds = (int)v);
+        Number(table, "Code: пауза на синтаксисе (мс)", 0, 5000, 25, p.CodeSyntaxPauseMilliseconds,
+            v => p.CodeSyntaxPauseMilliseconds = (int)v);
+        Number(table, "Code: скорость идентификаторов (%)", 40, 250, 5, p.CodeIdentifierSpeedPercent,
+            v => p.CodeIdentifierSpeedPercent = (int)v);
+        Number(table, "Code: скорость строковых литералов (%)", 40, 250, 5, p.CodeStringSpeedPercent,
+            v => p.CodeStringSpeedPercent = (int)v);
+        Number(table, "Code: скорость комментариев (%)", 40, 250, 5, p.CodeCommentSpeedPercent,
+            v => p.CodeCommentSpeedPercent = (int)v);
+        Number(table, "Code: повторное выделение окончания имени (%)", 0, 30, 1, p.CodeReviewPercent,
+            v => p.CodeReviewPercent = (int)v);
+
+        var codeInfo = Theme.Label(
+            "Анализ кода лексический: не полноценный AST компилятора. " +
+            "IDE может автоматически вставлять отступы и скобки.\n" +
+            "Автоматическая сверка результата появится с интеграциями IDE.", 8.3F);
+        codeInfo.ForeColor = Theme.Muted;
+        codeInfo.Margin = new Padding(4, 14, 4, 12);
+        var codeInfoRow = table.RowCount++;
+        table.Controls.Add(codeInfo, 0, codeInfoRow);
+        table.SetColumnSpan(codeInfo, 2);
+
         var editorName = Theme.Label("Профиль редактора для режима Code", 9.2F);
         editorName.Margin = new Padding(4, 12, 4, 10);
         var editorRow = table.RowCount;
