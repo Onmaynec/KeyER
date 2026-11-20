@@ -5,6 +5,7 @@ namespace KeyER;
 
 public enum TypingMode { Text, Code }
 public enum EditorType { Generic, VisualStudio, VSCode }
+public enum CodeIntegrityMode { Off, VerifyOnly, VerifyAndRepair }
 public enum TextEnterMode { Enter, ShiftEnter }
 public enum TextTabMode { Tab, Spaces }
 
@@ -24,6 +25,8 @@ public sealed class TypingProfile
     public int CursorReviewPercent { get; set; } = 3;
     public EditorType Editor { get; set; } = EditorType.Generic;
     public bool ClearAutoIndent { get; set; } = false;
+    // Opt-in: verified typing only works in blank Visual Studio / VS Code editors.
+    public CodeIntegrityMode CodeIntegrity { get; set; } = CodeIntegrityMode.Off;
     public int StartCountdownSeconds { get; set; } = 3;
 
     // Human Typing Engine 2.0 — applies to Text mode; Code stays independent.
@@ -103,6 +106,7 @@ public sealed class TypingProfile
         CodeStringSpeedPercent = Math.Clamp(CodeStringSpeedPercent, 40, 250);
         CodeCommentSpeedPercent = Math.Clamp(CodeCommentSpeedPercent, 40, 250);
         CodeReviewPercent = Math.Clamp(CodeReviewPercent, 0, 30);
+        if (!Enum.IsDefined(CodeIntegrity)) CodeIntegrity = CodeIntegrityMode.Off;
         Name = (Name ?? "").Trim();
         if (Name.Length == 0) Name = "Профиль";
     }
