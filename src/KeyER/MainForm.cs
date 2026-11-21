@@ -61,6 +61,7 @@ public sealed partial class MainForm : Form
     private Label _readyStep = null!;
     private Label _estimateLabel = null!;
     private Panel _emptyActions = null!;
+    private Panel _emptyOverlay = null!;
     private StudioButton _saveSource = null!;
     private string? _openedFilePath;
     private bool _modified;
@@ -463,8 +464,7 @@ public sealed partial class MainForm : Form
         _editor.TextChanged += (_, _) =>
         {
             if (!_importing) _modified = true;
-            _emptyHint!.Visible = _editor.TextLength == 0;
-            _emptyActions!.Visible = _editor.TextLength == 0;
+            _emptyOverlay!.Visible = _editor.TextLength == 0;
             _statsTimer.Stop();
             _statsTimer.Start();
             _syntaxPainter!.Schedule();
@@ -521,18 +521,26 @@ public sealed partial class MainForm : Form
         emptyPaste.Click += (_, _) => PasteIntoEditor();
         emptyOpen.Click += (_, _) => OpenFile();
         _emptyActions.Controls.AddRange([emptyPaste, emptyOpen]);
-        _editorSurface.Controls.Add(_editor);
-        _editorSurface.Controls.Add(_gutter);
-        _editorSurface.Controls.Add(_emptyHint);
-        _editorSurface.Controls.Add(_emptyActions);
-        _emptyHint.BringToFront();
-        _emptyActions.BringToFront();
-        _editorSurface.Resize += (_, _) =>
+        _emptyOverlay = new Panel
         {
-            var x = Math.Max(58, Math.Min(87, _editorSurface.ClientSize.Width / 8));
+            Dock = DockStyle.Fill, BackColor = Theme.Input, Tag = "input",
+            AccessibleName = "Подготовка исходного текста"
+        };
+        _emptyOverlay.Click += (_, _) => _editor.Focus();
+        _emptyOverlay.Controls.Add(_emptyHint);
+        _emptyOverlay.Controls.Add(_emptyActions);
+        _emptyOverlay.Resize += (_, _) =>
+        {
+            var x = Math.Max(30, Math.Min(87, _emptyOverlay.ClientSize.Width / 8));
             _emptyHint.Left = x;
             _emptyActions.Left = x - 3;
+            _emptyHint.Top = Math.Max(26, _emptyOverlay.ClientSize.Height / 5);
+            _emptyActions.Top = _emptyHint.Top + 100;
         };
+        _editorSurface.Controls.Add(_editor);
+        _editorSurface.Controls.Add(_gutter);
+        _editorSurface.Controls.Add(_emptyOverlay);
+        _emptyOverlay.BringToFront();
         _syntaxPainter = new SyntaxPainter(_editor)
         {
             IsCode = _settings.Mode == TypingMode.Code,
