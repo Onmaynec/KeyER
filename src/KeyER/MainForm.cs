@@ -229,6 +229,16 @@ public sealed class MainForm : Form
         var helpButton = new StudioButton { Text = "?   Справка", Width = 107, Height = 38, Tone = ButtonTone.Quiet };
         helpButton.Click += (_, _) => ShowHelp();
         headerActions.Controls.AddRange([_searchToggle, helpButton, settingsButton]);
+        pageHeader.Resize += (_, _) =>
+        {
+            var small = pageHeader.ClientSize.Width < 760;
+            helpButton.Visible = !small;
+            headerActions.Width = small ? 242 : 355;
+            _searchToggle.Width = small ? 91 : 102;
+            settingsButton.Width = small ? 135 : 126;
+            if (small) _pageTitle.Font = Theme.UiFont(17F, FontStyle.Bold);
+            else _pageTitle.Font = Theme.UiFont(_settings.CompactMode ? 17F : 20F, FontStyle.Bold);
+        };
         pageHeader.Controls.AddRange([_pageTitle, _pageSubtitle, headerActions]);
         _mainLayout.Controls.Add(pageHeader, 0, 0);
 
@@ -289,8 +299,18 @@ public sealed class MainForm : Form
             catch (Exception ex) { SetStatus("Копирование не удалось: " + ex.Message); }
         };
         commandRow.Controls.AddRange([pasteButton, openButton, copyButton, clearButton]);
+        _languagePicker.Left = 132;
+        _languagePicker.Top = 7;
         editorToolbar.Controls.Add(fileLabel);
+        editorToolbar.Controls.Add(_languagePicker);
         editorToolbar.Controls.Add(commandRow);
+        editorToolbar.Resize += (_, _) =>
+        {
+            var tight = editorToolbar.ClientSize.Width < 680;
+            copyButton.Visible = !tight;
+            clearButton.Visible = !tight;
+            commandRow.Width = tight ? 168 : 411;
+        };
 
         var separatorTop = new Panel { Dock = DockStyle.Top, Height = 1, Tag = "border", BackColor = Theme.Border };
         _searchPanel = new Panel
@@ -396,6 +416,14 @@ public sealed class MainForm : Form
         _wordCount.AutoSize = false; _wordCount.Width = 105; _wordCount.Dock = DockStyle.Right;
         _wordCount.TextAlign = ContentAlignment.MiddleRight;
         editorMeta.Controls.AddRange([_language, _caretInfo, _stats, _wordCount]);
+        editorMeta.Resize += (_, _) =>
+        {
+            var tight = editorMeta.ClientSize.Width < 670;
+            _wordCount.Visible = !tight;
+            _language.Width = tight ? 160 : 205;
+            _stats.Width = tight ? 122 : 166;
+            _caretInfo.Width = tight ? 100 : 115;
+        };
 
         editorMain.Controls.Add(_editorSurface);
         editorMain.Controls.Add(_searchPanel);
@@ -452,6 +480,15 @@ public sealed class MainForm : Form
         _pause.Click += (_, _) => { _engine.TogglePause(); UpdateButtons(); };
         _stop.Click += (_, _) => StopTyping();
         actions.Controls.AddRange([_start, _pause, _stop]);
+        actions.Resize += (_, _) =>
+        {
+            var tight = actions.ClientSize.Width < 530;
+            _start.Width = tight ? 135 : 184;
+            _pause.Width = tight ? 107 : 141;
+            _stop.Width = tight ? 110 : 151;
+            _start.Text = tight ? "▶   Начать" : "▶    Начать набор";
+            _stop.Text = tight ? "■   Стоп" : "■    Остановить";
+        };
         bottomLayout.Controls.Add(actions, 0, 2);
 
         _hotkeys = Theme.Label("", 8.2F);
