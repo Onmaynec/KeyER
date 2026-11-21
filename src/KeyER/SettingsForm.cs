@@ -77,9 +77,9 @@ public sealed class SettingsForm : Form
         foreach (var (name, title) in new[]
         {
             ("Поведение", "◉    Поведение"),
-            ("Text", "T    Обычный текст"),
-            ("Code", "</>    Режим Code"),
-            ("Hotkeys", "⌨    Горячие клавиши"),
+            ("Text", "T    Текст"),
+            ("Code", "</>    Код"),
+            ("Hotkeys", "⌨    Клавиши"),
             ("Appearance", "◐    Оформление")
         })
         {
@@ -227,7 +227,25 @@ public sealed class SettingsForm : Form
         var appearancePane = new Panel
         {
             Dock = DockStyle.Fill, BackColor = Theme.Surface,
-            AutoScroll = true, Padding = new Padding(22, 17, 20, 12)
+            Padding = new Padding(18, 15, 18, 14)
+        };
+        var appearanceLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+            BackColor = Theme.Surface, Padding = Padding.Empty,
+            Margin = Padding.Empty
+        };
+        appearanceLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
+        appearanceLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
+        var appearanceOptions = new Panel
+        {
+            Dock = DockStyle.Fill, AutoScroll = true,
+            BackColor = Theme.Surface, Padding = new Padding(0, 0, 7, 0)
+        };
+        var appearancePreviewHost = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Theme.Surface,
+            Padding = new Padding(12, 0, 0, 0)
         };
         var appearanceGrid = new TableLayoutPanel
         {
@@ -245,6 +263,7 @@ public sealed class SettingsForm : Form
             heading.Margin = new Padding(6, 17, 8, 10);
             appearanceGrid.Controls.Add(heading, 0, row);
             control.Margin = new Padding(3, 10, 8, 10);
+            if (control is ComboBox) control.Dock = DockStyle.Fill;
             appearanceGrid.Controls.Add(control, 1, row);
         }
 
@@ -314,10 +333,13 @@ public sealed class SettingsForm : Form
         previewNote.Height = 57;
         previewNote.ForeColor = Theme.Muted;
         previewNote.Padding = new Padding(5, 10, 0, 0);
-        appearancePane.Controls.Add(previewNote);
-        appearancePane.Controls.Add(_themePreview);
-        appearancePane.Controls.Add(previewCaption);
-        appearancePane.Controls.Add(appearanceGrid);
+        appearancePreviewHost.Controls.Add(previewNote);
+        appearancePreviewHost.Controls.Add(_themePreview);
+        appearancePreviewHost.Controls.Add(previewCaption);
+        appearanceOptions.Controls.Add(appearanceGrid);
+        appearanceLayout.Controls.Add(appearanceOptions, 0, 0);
+        appearanceLayout.Controls.Add(appearancePreviewHost, 1, 0);
+        appearancePane.Controls.Add(appearanceLayout);
         paneHost.Controls.Add(appearancePane);
         _pages.Add("Appearance", appearancePane);
 
