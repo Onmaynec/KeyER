@@ -11,9 +11,9 @@ internal static class Theme
 {
     private static AppearanceMode _mode = AppearanceMode.Dark;
     private static AccentTheme _accent = AccentTheme.Iris;
+    public static bool SystemIsLight => !SystemInformation.HighContrast && IsWindowsLight();
     public static bool IsLight => _mode == AppearanceMode.Light ||
-        (_mode == AppearanceMode.System && SystemInformation.HighContrast == false &&
-         IsWindowsLight());
+        (_mode == AppearanceMode.System && SystemIsLight);
 
     public static Color Background => IsLight ? Color.FromArgb(244, 246, 252) : Color.FromArgb(12, 15, 26);
     public static Color Surface => IsLight ? Color.White : Color.FromArgb(23, 28, 44);
