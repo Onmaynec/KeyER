@@ -69,6 +69,9 @@ internal static class Program
                 main.Show();
                 Application.DoEvents();
                 var editor = Descendants(main).OfType<RichTextBox>().Single();
+                var codeButton = Descendants(main).OfType<StudioButton>()
+                    .FirstOrDefault(b => b.Text.Contains("Редактор кода", StringComparison.Ordinal));
+                codeButton?.PerformClick();
                 editor.Text =
                     "using System;\n\nnamespace KeyER.Preview;\n\n" +
                     "public static class HumanTyping\n{\n" +
