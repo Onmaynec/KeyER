@@ -5,6 +5,7 @@ namespace KeyER;
 public sealed class SettingsForm : Form
 {
     private readonly AppSettings _working;
+    private readonly Icon _ownedIcon;
     private readonly ComboBox _profileSelect;
     private readonly FlowLayoutPanel _profileToolbar;
     private readonly Panel _fieldsHost;
@@ -24,6 +25,9 @@ public sealed class SettingsForm : Form
     {
         _working = source.Clone();
         _working.Validate();
+        _ownedIcon = BrandIcon.Create();
+        Icon = _ownedIcon;
+        FormClosed += (_, _) => _ownedIcon.Dispose();
         _selected = _working.GetProfile();
 
         Text = "KeyER Studio — Настройки";
@@ -338,11 +342,13 @@ public sealed class SettingsForm : Form
         table.ResumeLayout(true);
     }
 
-    private static Button Button(string title, int width, bool primary = false)
+    private static StudioButton Button(string title, int width, bool primary = false)
     {
-        var b = new Button { Text = title, Width = width, Height = 33 };
-        Theme.StyleButton(b, primary);
-        return b;
+        return new StudioButton
+        {
+            Text = title, Width = width, Height = 36,
+            Tone = primary ? ButtonTone.Primary : ButtonTone.Soft
+        };
     }
 
     private void ReloadProfileList()
