@@ -29,6 +29,7 @@ public sealed partial class MainForm : Form
     private readonly Label _progressPercent;
     private readonly Label _caretInfo;
     private readonly Label _emptyHint;
+    private readonly Label _emptyDescription;
     private readonly Label _pageTitle;
     private readonly Label _pageSubtitle;
     private readonly Label _wordCount;
@@ -497,13 +498,20 @@ public sealed partial class MainForm : Form
         _editorSurface.DragEnter += FileDragEnter;
         _editorSurface.DragDrop += FileDropped;
         _gutter = new EditorGutter { Editor = _editor, Visible = _settings.ShowLineNumbers };
-        _emptyHint = Theme.Label(
-            "НАЧНИТЕ С ИСХОДНИКА\n\n" +
-            "Вставьте текст или откройте файл. Он останется здесь,\n" +
-            "пока вы не очистите редактор вручную.", 10F, true);
-        _emptyHint.ForeColor = Theme.Muted; _emptyHint.Tag = "muted";
-        _emptyHint.Left = 87; _emptyHint.Top = 48;
+        _emptyHint = Theme.Label("Начните с исходника", 16F, true);
+        _emptyHint.ForeColor = Theme.Foreground;
+        _emptyHint.AutoSize = false;
+        _emptyHint.SetBounds(87, 48, 440, 42);
+        _emptyHint.TextAlign = ContentAlignment.MiddleLeft;
         _emptyHint.Click += (_, _) => BeginManualEntry();
+        _emptyDescription = Theme.Label(
+            "Вставьте текст или откройте файл. Он останется здесь,\n" +
+            "пока вы не очистите редактор вручную.", 9.2F);
+        _emptyDescription.AutoSize = false;
+        _emptyDescription.SetBounds(87, 98, 468, 59);
+        _emptyDescription.ForeColor = Theme.Muted;
+        _emptyDescription.Tag = "muted";
+        _emptyDescription.Click += (_, _) => BeginManualEntry();
 
         _emptyActions = new Panel
         {
@@ -536,14 +544,19 @@ public sealed partial class MainForm : Form
         };
         _emptyOverlay.Click += (_, _) => BeginManualEntry();
         _emptyOverlay.Controls.Add(_emptyHint);
+        _emptyOverlay.Controls.Add(_emptyDescription);
         _emptyOverlay.Controls.Add(_emptyActions);
         _emptyOverlay.Resize += (_, _) =>
         {
             var x = Math.Max(30, Math.Min(87, _emptyOverlay.ClientSize.Width / 8));
             _emptyHint.Left = x;
+            _emptyDescription.Left = x;
+            _emptyHint.Width = Math.Max(200, _emptyOverlay.ClientSize.Width - x - 18);
+            _emptyDescription.Width = _emptyHint.Width;
             _emptyActions.Left = x - 3;
-            _emptyHint.Top = Math.Max(26, _emptyOverlay.ClientSize.Height / 5);
-            _emptyActions.Top = _emptyHint.Top + 100;
+            _emptyHint.Top = Math.Max(20, _emptyOverlay.ClientSize.Height / 6);
+            _emptyDescription.Top = _emptyHint.Top + 53;
+            _emptyActions.Top = _emptyHint.Top + 116;
         };
         _editorSurface.Controls.Add(_editor);
         _editorSurface.Controls.Add(_gutter);
