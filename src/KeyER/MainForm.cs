@@ -549,6 +549,7 @@ public sealed class MainForm : Form
 
         Shown += (_, _) =>
         {
+            Theme.ApplyWindowFrame(this);
             if (Environment.GetEnvironmentVariable("KEYER_UI_PREVIEW") == "1") return;
             RegisterHotkeys(showWarnings: true);
             _ideBridge.Start();
@@ -699,6 +700,7 @@ public sealed class MainForm : Form
         previousIcon?.Dispose();
         BackColor = Theme.Background;
         ForeColor = Theme.Foreground;
+        Theme.ApplyWindowFrame(this);
         ApplyColorsRecursive(this);
         _syntaxPainter.Schedule();
         UpdateVisualButtons();
