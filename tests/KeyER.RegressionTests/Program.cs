@@ -868,6 +868,13 @@ internal static class Program
                 Assert(Descendants(main).OfType<TextBox>().Any(t =>
                     t.PlaceholderText.Contains("Поиск", StringComparison.Ordinal)),
                     "Improved Find bar present.");
+                var onboarding = Descendants(main).OfType<Panel>().FirstOrDefault(x =>
+                    x.AccessibleName == "Подготовка исходного текста");
+                Assert(onboarding is not null, "First-run onboarding should cover the empty editor.");
+                Assert(Descendants(onboarding!).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Вставить", StringComparison.Ordinal)), "Onboarding paste action.");
+                Assert(Descendants(onboarding!).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Открыть", StringComparison.Ordinal)), "Onboarding file action.");
 
                 using var settings = new SettingsForm(new AppSettings());
                 Assert(Descendants(settings).OfType<StudioButton>().Count() >= 6,
