@@ -80,6 +80,8 @@ internal static class Program
                     "        Console.WriteLine($\"Hello, {name}!\");\n" +
                     "    }\n}\n";
                 Application.DoEvents();
+                Thread.Sleep(350); // Let the syntax-highlighting timer elapse.
+                Application.DoEvents();
                 main.Refresh();
                 Application.DoEvents();
                 using (var bitmap = new Bitmap(main.Width, main.Height))
