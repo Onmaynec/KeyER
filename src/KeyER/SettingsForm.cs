@@ -399,7 +399,7 @@ public sealed class SettingsForm : Form
         {
             Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2,
             GrowStyle = TableLayoutPanelGrowStyle.AddRows,
-            BackColor = Theme.Background, Padding = new Padding(4, 10, 15, 15)
+            BackColor = Theme.Surface, Padding = new Padding(4, 10, 15, 15)
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 63));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 37));
@@ -511,14 +511,14 @@ public sealed class SettingsForm : Form
         table.Controls.Add(tabCombo, 1, tabRow);
 
         var textNoteRow = table.RowCount++;
-        var textNote = Theme.Label("Для чатов выбирайте Shift+Enter: обычный Enter может отправить сообщение.\\n" +
+        var textNote = Theme.Label("Для чатов выбирайте Shift+Enter: обычный Enter может отправить сообщение.\n" +
             "Паузы и коррекции относятся только к Text; точность зависит от текстового поля.", 8.3F);
         textNote.ForeColor = Theme.Muted;
         textNote.Margin = new Padding(4, 14, 4, 12);
         table.Controls.Add(textNote, 0, textNoteRow);
         table.SetColumnSpan(textNote, 2);
 
-        var codeTitle = Theme.Label("CODE INTELLIGENCE 0.3 — синтаксический ритм", 11F, true);
+        var codeTitle = Theme.Label("CODE INTELLIGENCE — синтаксис и IDE", 11F, true);
         codeTitle.ForeColor = Theme.Accent;
         codeTitle.Margin = new Padding(4, 22, 4, 12);
         var codeTitleRow = table.RowCount++;
@@ -545,7 +545,7 @@ public sealed class SettingsForm : Form
         var codeInfo = Theme.Label(
             "Анализ кода лексический: не полноценный AST компилятора. " +
             "IDE может автоматически вставлять отступы и скобки.\n" +
-            "Автоматическая сверка результата появится с интеграциями IDE.", 8.3F);
+            "Сверка результата доступна при установленной интеграции IDE.", 8.3F);
         codeInfo.ForeColor = Theme.Muted;
         codeInfo.Margin = new Padding(4, 14, 4, 12);
         var codeInfoRow = table.RowCount++;
@@ -614,6 +614,7 @@ public sealed class SettingsForm : Form
         table.SetColumnSpan(warning, 2);
         _fieldsHost.Controls.Add(table);
         _fieldsHost.ResumeLayout();
+        FilterProfileFields();
     }
 
     private static void Number(TableLayoutPanel table, string label, decimal min,
