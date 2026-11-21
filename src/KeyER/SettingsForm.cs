@@ -27,6 +27,7 @@ public sealed class SettingsForm : Form
         _working.Validate();
         _ownedIcon = BrandIcon.Create();
         Icon = _ownedIcon;
+        Shown += (_, _) => Theme.ApplyWindowFrame(this);
         FormClosed += (_, _) => _ownedIcon.Dispose();
         _selected = _working.GetProfile();
 
