@@ -58,6 +58,26 @@ internal static class Theme
         _accent = accent;
     }
 
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute,
+        ref int value, int valueSize);
+
+    public static void ApplyWindowFrame(Form window)
+    {
+        if (!window.IsHandleCreated) return;
+        try
+        {
+            var dark = IsLight ? 0 : 1;
+            var size = sizeof(int);
+            if (DwmSetWindowAttribute(window.Handle, 20, ref dark, size) != 0)
+                _ = DwmSetWindowAttribute(window.Handle, 19, ref dark, size);
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            // Old Windows builds may not support immersive dark title bars.
+        }
+    }
+
     public static Font UiFont(float size, FontStyle style = FontStyle.Regular) =>
         new("Segoe UI", size, style, GraphicsUnit.Point);
 
