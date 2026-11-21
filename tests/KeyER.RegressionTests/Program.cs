@@ -7,8 +7,11 @@ internal static class Program
 {
     private static int _passed;
 
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--studio-preview"))
+            return await GenerateStudioPreviewAsync();
+
         try
         {
             await Check("Unicode, line breaks and tabs", UnicodeAndLines);
@@ -44,6 +47,73 @@ internal static class Program
             Console.Error.WriteLine("FAILED: " + error);
             return 1;
         }
+    }
+
+    private static Task<int> GenerateStudioPreviewAsync()
+    {
+        var result = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var directory = Path.GetFullPath("artifacts/ui-preview");
+                Directory.CreateDirectory(directory);
+
+                using var main = new MainForm
+                {
+                    StartPosition = FormStartPosition.Manual,
+                    Location = new Point(60, 60),
+                    Size = new Size(1170, 760)
+                };
+                main.Show();
+                Application.DoEvents();
+                var editor = Descendants(main).OfType<RichTextBox>().Single();
+                editor.Text =
+                    "using System;\n\nnamespace KeyER.Preview;\n\n" +
+                    "public static class HumanTyping\n{\n" +
+                    "    public static void Hello(string name)\n    {\n" +
+                    "        // Пример форматирования кода в редакторе\n" +
+                    "        Console.WriteLine($\"Hello, {name}!\");\n" +
+                    "    }\n}\n";
+                Application.DoEvents();
+                main.Refresh();
+                Application.DoEvents();
+                using (var bitmap = new Bitmap(main.Width, main.Height))
+                {
+                    main.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "KeyER-Studio-Main.png"));
+                }
+
+                using var settings = new SettingsForm(new AppSettings())
+                {
+                    StartPosition = FormStartPosition.Manual,
+                    Location = new Point(65, 65),
+                    Size = new Size(1050, 790)
+                };
+                settings.Show(main);
+                Application.DoEvents();
+                settings.Refresh();
+                Application.DoEvents();
+                using (var bitmap = new Bitmap(settings.Width, settings.Height))
+                {
+                    settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "KeyER-Studio-Settings.png"));
+                }
+
+                settings.Close();
+                main.Close();
+                result.TrySetResult(0);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("UI preview unavailable: " + ex);
+                result.TrySetResult(1);
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        return result.Task;
     }
 
     private static async Task Check(string name, Func<Task> test)
