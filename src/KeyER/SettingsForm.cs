@@ -14,31 +14,121 @@ public sealed class SettingsForm : Form
 
     public AppSettings Result => _working;
 
+    private readonly Dictionary<string, StudioButton> _navButtons = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Panel> _pages = new(StringComparer.Ordinal);
+    private Label _pageHeading = null!;
+    private Label _pageDescription = null!;
+    private string _profileSection = "Поведение";
+
     public SettingsForm(AppSettings source)
     {
         _working = source.Clone();
         _working.Validate();
         _selected = _working.GetProfile();
 
-        Text = "KeyER — расширенные настройки";
+        Text = "KeyER Studio — Настройки";
         BackColor = Theme.Background;
         ForeColor = Theme.Foreground;
-        Font = new Font("Segoe UI", 9.3F);
+        Font = Theme.UiFont(9.5F);
         StartPosition = FormStartPosition.CenterParent;
-        MinimumSize = new Size(620, 560);
-        Size = new Size(790, 710);
+        MinimumSize = new Size(820, 600);
+        Size = new Size(1030, 780);
 
-        var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(16, 8) };
-        var profilesTab = new TabPage("Профили и поведение") { BackColor = Theme.Background, ForeColor = Theme.Foreground, Padding = new Padding(13) };
-        var hotkeysTab = new TabPage("Горячие клавиши") { BackColor = Theme.Background, ForeColor = Theme.Foreground, Padding = new Padding(13) };
-        tabs.TabPages.AddRange([profilesTab, hotkeysTab]);
+        var shell = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+            Margin = Padding.Empty, Padding = Padding.Empty,
+            BackColor = Theme.Background
+        };
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
+        var sidebar = new Panel
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(15, 24, 13, 20),
+            BackColor = Theme.Surface
+        };
+        var brandLabel = Theme.Label("KEYER  /  STUDIO", 10F, true);
+        brandLabel.ForeColor = Theme.Accent;
+        brandLabel.Left = 10; brandLabel.Top = 9;
+        var brandCaption = Theme.Label("ПАРАМЕТРЫ", 8F);
+        brandCaption.ForeColor = Theme.Muted;
+        brandCaption.Left = 10; brandCaption.Top = 35;
+        var sideNav = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+            WrapContents = false, AutoScroll = true,
+            Padding = new Padding(0, 6, 0, 0),
+            BackColor = Theme.Surface, Margin = Padding.Empty
+        };
+        sidebar.Controls.Add(sideNav);
+        var brandPanel = new Panel { Dock = DockStyle.Top, Height = 91, BackColor = Theme.Surface };
+        brandPanel.Controls.AddRange([brandLabel, brandCaption]);
+        sidebar.Controls.Add(brandPanel);
+
+        foreach (var (name, title) in new[]
+        {
+            ("Поведение", "◉    Поведение"),
+            ("Text", "T    Обычный текст"),
+            ("Code", "</>    Режим Code"),
+            ("Hotkeys", "⌨    Горячие клавиши"),
+            ("Appearance", "◐    Оформление")
+        })
+        {
+            var navButton = new StudioButton
+            {
+                Text = title, Width = 172, Height = 45,
+                Margin = new Padding(0, 3, 0, 3),
+                Tone = ButtonTone.Quiet
+            };
+            navButton.Click += (_, _) => ShowCategory(name);
+            sideNav.Controls.Add(navButton);
+            _navButtons.Add(name, navButton);
+        }
+        sideNav.SizeChanged += (_, _) =>
+        {
+            foreach (var button in _navButtons.Values)
+                button.Width = Math.Max(145, sideNav.ClientSize.Width - 11);
+        };
+        shell.Controls.Add(sidebar, 0, 0);
+
+        var contentHost = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Theme.Background,
+            Padding = new Padding(26, 14, 26, 9)
+        };
+        var pageHeader = new Panel { Dock = DockStyle.Top, Height = 101, BackColor = Theme.Background };
+        var caption = Theme.Label("НАСТРОЙКИ / KEYER", 8F, true);
+        caption.ForeColor = Theme.Accent; caption.Left = 1; caption.Top = 10;
+        _pageHeading = Theme.Label("Поведение", 21F, true);
+        _pageHeading.Left = 0; _pageHeading.Top = 34;
+        _pageDescription = Theme.Label("Управляйте характером печати и привычками.", 8.8F);
+        _pageDescription.ForeColor = Theme.Muted; _pageDescription.Left = 1; _pageDescription.Top = 76;
+        pageHeader.Controls.AddRange([caption, _pageHeading, _pageDescription]);
+
+        var paneFrame = new StudioCard
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(1),
+            Radius = 17
+        };
+        var paneHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface };
+        paneFrame.Controls.Add(paneHost);
+        contentHost.Controls.Add(paneFrame);
+        contentHost.Controls.Add(pageHeader);
+        shell.Controls.Add(contentHost, 1, 0);
+
+        var profilePane = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Theme.Surface,
+            Padding = new Padding(19, 13, 19, 10)
+        };
         _profileToolbar = new FlowLayoutPanel
         {
-            Dock = DockStyle.Top, Height = 88, AutoScroll = true,
-            WrapContents = true, Padding = new Padding(0, 0, 0, 5), BackColor = Theme.Background
+            Dock = DockStyle.Top, Height = 74, AutoScroll = true,
+            WrapContents = false, Padding = new Padding(0, 7, 0, 11),
+            BackColor = Theme.Surface
         };
-        _profileSelect = new ComboBox { Width = 220, Height = 32 };
+        _profileSelect = new ComboBox { Width = 215, Height = 35 };
         Theme.StyleCombo(_profileSelect);
         _profileSelect.SelectedIndexChanged += (_, _) =>
         {
@@ -49,61 +139,142 @@ public sealed class SettingsForm : Form
         };
         _newProfileName = new TextBox
         {
-            Width = 166, Height = 32, BackColor = Theme.Surface, ForeColor = Theme.Foreground,
-            BorderStyle = BorderStyle.FixedSingle, PlaceholderText = "Название профиля"
+            Width = 168, Height = 35, BackColor = Theme.SurfaceRaised, ForeColor = Theme.Foreground,
+            BorderStyle = BorderStyle.FixedSingle, PlaceholderText = "Новый профиль",
+            Font = Theme.UiFont(9.1F)
         };
-        var create = Button("Сохранить как", 125);
-        var delete = Button("Удалить", 83);
+        var create = Button("Сохранить как", 123);
+        var delete = Button("Удалить", 85);
         create.Click += (_, _) => CreateProfile();
         delete.Click += (_, _) => DeleteProfile();
         _profileToolbar.Controls.AddRange([_profileSelect, _newProfileName, create, delete]);
+        _fieldsHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Surface };
+        profilePane.Controls.Add(_fieldsHost);
+        profilePane.Controls.Add(_profileToolbar);
+        paneHost.Controls.Add(profilePane);
+        _pages.Add("profiles", profilePane);
 
-        _fieldsHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Background };
-        var profilesCaption = Theme.Label("Параметры текущего профиля сохраняются сразу в рабочую копию.", 8.5f);
-        profilesCaption.ForeColor = Theme.Muted;
-        profilesCaption.Dock = DockStyle.Top;
-        profilesCaption.Height = 25;
-
-        profilesTab.Controls.Add(_fieldsHost);
-        profilesTab.Controls.Add(profilesCaption);
-        profilesTab.Controls.Add(_profileToolbar);
-        ReloadProfileList();
-
+        var keysPane = new Panel
+        {
+            Dock = DockStyle.Fill, AutoScroll = true,
+            BackColor = Theme.Surface, Padding = new Padding(21, 17, 21, 14)
+        };
         var keysPanel = new TableLayoutPanel
         {
-            Dock = DockStyle.Top, Padding = new Padding(10, 18, 10, 4),
-            RowCount = 4, ColumnCount = 2, AutoSize = true,
-            BackColor = Theme.Background
+            Dock = DockStyle.Top, Padding = new Padding(8, 15, 8, 4),
+            RowCount = 3, ColumnCount = 2, AutoSize = true, BackColor = Theme.Surface
         };
-        keysPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
+        keysPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 215));
         keysPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddHotkey(keysPanel, 0, "Начать набор", () => _working.StartHotkey, v => _working.StartHotkey = v);
-        AddHotkey(keysPanel, 1, "Пауза / продолжение", () => _working.PauseHotkey, v => _working.PauseHotkey = v);
+        AddHotkey(keysPanel, 1, "Пауза / продолжить", () => _working.PauseHotkey, v => _working.PauseHotkey = v);
         AddHotkey(keysPanel, 2, "Остановить", () => _working.StopHotkey, v => _working.StopHotkey = v);
-        var note = Theme.Label("Нажмите на поле и затем на нужную комбинацию.\n\n" +
-            "Функциональные клавиши F1–F24 разрешены сами по себе.\n" +
-            "Для букв и цифр используйте хотя бы Ctrl или Alt.\n" +
-            "Если комбинация уже занята Windows или другой программой,\nKeyER сообщит об этом при сохранении.", 9F);
-        note.ForeColor = Theme.Muted;
-        note.Padding = new Padding(10, 20, 0, 0);
-        note.AutoSize = true;
-        hotkeysTab.Controls.Add(note);
-        hotkeysTab.Controls.Add(keysPanel);
-        note.Dock = DockStyle.Top;
+        var note = Theme.Label(
+            "Выделите поле и нажмите новое сочетание.\n\n" +
+            "F1–F24 можно использовать без модификаторов. Для букв и цифр\n" +
+            "нужен Ctrl, Alt или Shift. Если сочетание занято, KeyER\n" +
+            "сообщит об этом при сохранении.", 9F);
+        note.ForeColor = Theme.Muted; note.Padding = new Padding(7, 15, 0, 0);
+        note.Dock = DockStyle.Top; note.Height = 129; note.AutoSize = false;
+        keysPane.Controls.Add(note);
+        keysPane.Controls.Add(keysPanel);
+        paneHost.Controls.Add(keysPane);
+        _pages.Add("Hotkeys", keysPane);
 
-        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 67, Padding = new Padding(12), BackColor = Theme.Surface };
-        var save = Button("Сохранить", 124, primary: true);
-        var cancel = Button("Отмена", 108);
-        save.Dock = DockStyle.Right;
-        cancel.Dock = DockStyle.Right;
+        var appearancePane = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Theme.Surface,
+            AutoScroll = true, Padding = new Padding(22, 17, 20, 12)
+        };
+        var appearanceGrid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2,
+            BackColor = Theme.Surface, Padding = new Padding(0, 0, 0, 15)
+        };
+        appearanceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+        appearanceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+
+        void AddOption(string title, Control control)
+        {
+            var row = appearanceGrid.RowCount++;
+            appearanceGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 57));
+            var heading = Theme.Label(title, 9.3F, true);
+            heading.Margin = new Padding(6, 17, 8, 10);
+            appearanceGrid.Controls.Add(heading, 0, row);
+            control.Margin = new Padding(3, 10, 8, 10);
+            appearanceGrid.Controls.Add(control, 1, row);
+        }
+
+        var appearanceSelect = new ComboBox { Width = 194 };
+        Theme.StyleCombo(appearanceSelect);
+        appearanceSelect.Items.AddRange(["Тёмная", "Светлая", "Как в Windows"]);
+        appearanceSelect.SelectedIndex = (int)_working.Appearance;
+        appearanceSelect.SelectedIndexChanged += (_, _) =>
+            _working.Appearance = (AppearanceMode)appearanceSelect.SelectedIndex;
+        AddOption("Цветовая тема", appearanceSelect);
+
+        var accentSelect = new ComboBox { Width = 194 };
+        Theme.StyleCombo(accentSelect);
+        accentSelect.Items.AddRange(["Iris · фиолетовый", "Ocean · синий", "Mint · зелёный", "Amber · янтарный"]);
+        accentSelect.SelectedIndex = (int)_working.Accent;
+        accentSelect.SelectedIndexChanged += (_, _) =>
+            _working.Accent = (AccentTheme)accentSelect.SelectedIndex;
+        AddOption("Акцент интерфейса", accentSelect);
+
+        CheckBox Toggle(string text, bool value, Action<bool> changed)
+        {
+            var box = new CheckBox
+            {
+                Text = text, Checked = value, AutoSize = true,
+                ForeColor = Theme.Foreground, BackColor = Theme.Surface,
+                Font = Theme.UiFont(9F)
+            };
+            box.CheckedChanged += (_, _) => changed(box.Checked);
+            return box;
+        }
+
+        AddOption("Компоновка окна", Toggle("Компактный режим", _working.CompactMode, v => _working.CompactMode = v));
+        AddOption("Поверх других окон", Toggle("Закрепить окно", _working.AlwaysOnTop, v => _working.AlwaysOnTop = v));
+        AddOption("Редактор текста", Toggle("Номера строк", _working.ShowLineNumbers, v => _working.ShowLineNumbers = v));
+        AddOption("Подсветка кода", Toggle("Цветной синтаксис", _working.SyntaxHighlighting, v => _working.SyntaxHighlighting = v));
+        var fontSize = new NumericUpDown
+        {
+            Minimum = 9, Maximum = 18, Value = _working.EditorFontSize,
+            Width = 86, Height = 32, BackColor = Theme.SurfaceRaised,
+            ForeColor = Theme.Foreground, Font = Theme.UiFont(10.5F)
+        };
+        fontSize.ValueChanged += (_, _) => _working.EditorFontSize = (int)fontSize.Value;
+        AddOption("Размер текста в редакторе", fontSize);
+
+        var preview = new StudioCard { Dock = DockStyle.Top, Height = 132, Radius = 13, Outline = false };
+        var previewHeadline = Theme.Label("КОМФОРТ ДЛЯ ДОЛГОЙ РАБОТЫ", 9F, true);
+        previewHeadline.ForeColor = Theme.Accent; previewHeadline.Left = 18; previewHeadline.Top = 18;
+        var previewBody = Theme.Label(
+            "Настройки оформления применятся после нажатия «Сохранить».\n" +
+            "Текст и настройки профилей при смене темы не теряются.", 9.2F);
+        previewBody.ForeColor = Theme.Muted; previewBody.Left = 18; previewBody.Top = 50;
+        preview.Controls.AddRange([previewHeadline, previewBody]);
+        appearancePane.Controls.Add(preview);
+        appearancePane.Controls.Add(appearanceGrid);
+        paneHost.Controls.Add(appearancePane);
+        _pages.Add("Appearance", appearancePane);
+
+        // Sticky footer outside scrollable settings body.
+        var bottom = new Panel
+        {
+            Dock = DockStyle.Bottom, Height = 76, BackColor = Theme.Background,
+            Padding = new Padding(20, 11, 24, 11)
+        };
+        var save = new StudioButton { Text = "Сохранить изменения", Width = 194, Height = 45, Tone = ButtonTone.Primary, Dock = DockStyle.Right };
+        var cancel = new StudioButton { Text = "Отмена", Width = 117, Height = 45, Tone = ButtonTone.Quiet, Dock = DockStyle.Right };
         save.Click += (_, _) =>
         {
             if (_working.StartHotkey == _working.PauseHotkey ||
                 _working.StartHotkey == _working.StopHotkey ||
                 _working.PauseHotkey == _working.StopHotkey)
             {
-                MessageBox.Show(this, "Старт, пауза и остановка должны иметь разные комбинации.",
-                    "KeyER", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, "Старт, пауза и остановка должны иметь разные сочетания.",
+                    "KeyER — горячие клавиши", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             _working.Validate();
@@ -111,11 +282,60 @@ public sealed class SettingsForm : Form
             Close();
         };
         cancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
-        bottom.Controls.AddRange([save, cancel]);
-        Controls.Add(tabs);
+        bottom.Controls.Add(save);
+        bottom.Controls.Add(cancel);
+        Controls.Add(shell);
         Controls.Add(bottom);
         AcceptButton = save;
         CancelButton = cancel;
+        ReloadProfileList();
+        ShowCategory("Поведение");
+    }
+
+    private void ShowCategory(string category)
+    {
+        _profileSection = category;
+        var profileVisible = category is "Поведение" or "Text" or "Code";
+        _pages["profiles"].Visible = profileVisible;
+        _pages["Hotkeys"].Visible = category == "Hotkeys";
+        _pages["Appearance"].Visible = category == "Appearance";
+
+        foreach (var (name, button) in _navButtons)
+            button.Tone = name == category ? ButtonTone.Primary : ButtonTone.Quiet;
+
+        (_pageHeading.Text, _pageDescription.Text) = category switch
+        {
+            "Text" => ("Обычный текст", "Паузы, скорость, переносы и исправления в сообщениях."),
+            "Code" => ("Режим Code", "Темп программиста, подсказки, IDE и контроль корректности."),
+            "Hotkeys" => ("Горячие клавиши", "Действия KeyER всегда под рукой."),
+            "Appearance" => ("Оформление", "Цвета, плотность, шрифт и рабочее пространство."),
+            _ => ("Поведение", "Стиль печати, концентрация, усталость и ошибки.")
+        };
+        FilterProfileFields();
+    }
+
+    private void FilterProfileFields()
+    {
+        if (_fieldsHost.Controls.OfType<TableLayoutPanel>().FirstOrDefault() is not { } table)
+            return;
+
+        var current = "Поведение";
+        table.SuspendLayout();
+        for (var row = 0; row < table.RowCount; row++)
+        {
+            var caption = table.GetControlFromPosition(0, row) as Label;
+            if (caption?.Text.StartsWith("TEXT ENGINE", StringComparison.Ordinal) == true)
+                current = "Text";
+            else if (caption?.Text.StartsWith("CODE INTELLIGENCE", StringComparison.Ordinal) == true)
+                current = "Code";
+
+            var show = current == _profileSection;
+            foreach (Control control in table.Controls)
+            {
+                if (table.GetRow(control) == row) control.Visible = show;
+            }
+        }
+        table.ResumeLayout(true);
     }
 
     private static Button Button(string title, int width, bool primary = false)
