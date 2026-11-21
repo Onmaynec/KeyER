@@ -356,27 +356,76 @@ public sealed class MainForm : Form
             Dock = DockStyle.Top, Height = 43, Visible = false,
             Padding = new Padding(18, 4, 12, 4), Tag = "surface", BackColor = Theme.Surface
         };
+        var findGrid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 7, RowCount = 1,
+            Margin = Padding.Empty, Padding = Padding.Empty,
+            BackColor = Theme.Surface, Tag = "surface"
+        };
+        findGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        foreach (var width in new float[] { 30, -1, 86, 36, 36, 44, 36 })
+            findGrid.ColumnStyles.Add(width < 0
+                ? new ColumnStyle(SizeType.Percent, 100)
+                : new ColumnStyle(SizeType.Absolute, width));
+
         var findIcon = Theme.Label("⌕", 15F, true);
         findIcon.ForeColor = Theme.Accent; findIcon.Tag = "accent";
-        findIcon.Left = 10; findIcon.Top = 5;
+        findIcon.Dock = DockStyle.Fill; findIcon.AutoSize = false;
+        findIcon.TextAlign = ContentAlignment.MiddleCenter;
+
         _findField = new TextBox
         {
-            BorderStyle = BorderStyle.None, Font = Theme.UiFont(10.5F),
+            BorderStyle = BorderStyle.None, Font = Theme.UiFont(10.1F),
             BackColor = Theme.SurfaceRaised, ForeColor = Theme.Foreground,
-            PlaceholderText = "Найти в тексте...", Left = 46, Top = 11, Width = 250
+            PlaceholderText = "Поиск по исходнику", Dock = DockStyle.Fill,
+            Margin = new Padding(6, 9, 6, 5)
         };
         _findField.TextChanged += (_, _) => FindInEditor(forward: true, quiet: true);
         _findField.KeyDown += (_, e) =>
         {
-            if (e.KeyCode == Keys.Enter) { FindInEditor(!e.Shift); e.SuppressKeyPress = true; }
-            if (e.KeyCode == Keys.Escape) { ToggleFind(); e.SuppressKeyPress = true; }
+            if (e.KeyCode == Keys.Enter)
+            {
+                FindInEditor(!e.Shift);
+                e.SuppressKeyPress = true;
+            }
+            else if (e.KeyCode == Keys.Escape)
+            {
+                ToggleFind(false);
+                e.SuppressKeyPress = true;
+            }
         };
-        _findCount = Theme.Label("", 8F);
+        _findCount = Theme.Label("0 из 0", 8F);
         _findCount.ForeColor = Theme.Muted; _findCount.Tag = "muted";
-        _findCount.Left = 306; _findCount.Top = 12;
-        var closeFind = new StudioButton { Text = "✕", Width = 35, Height = 32, Tone = ButtonTone.Quiet, Dock = DockStyle.Right };
-        closeFind.Click += (_, _) => ToggleFind();
-        _searchPanel.Controls.AddRange([findIcon, _findField, _findCount, closeFind]);
+        _findCount.Dock = DockStyle.Fill; _findCount.AutoSize = false;
+        _findCount.TextAlign = ContentAlignment.MiddleCenter;
+
+        _searchPrevious = new StudioButton { Text = "↑", Dock = DockStyle.Fill, Tone = ButtonTone.Quiet };
+        _searchNext = new StudioButton { Text = "↓", Dock = DockStyle.Fill, Tone = ButtonTone.Quiet };
+        _caseToggle = new StudioButton { Text = "Aa", Dock = DockStyle.Fill, Tone = ButtonTone.Quiet };
+        var closeFind = new StudioButton { Text = "×", Dock = DockStyle.Fill, Tone = ButtonTone.Quiet };
+        foreach (var button in new[] { _searchPrevious, _searchNext, _caseToggle, closeFind })
+            button.Margin = new Padding(1, 3, 1, 3);
+        _searchPrevious.Click += (_, _) => FindInEditor(false);
+        _searchNext.Click += (_, _) => FindInEditor(true);
+        _caseToggle.Click += (_, _) =>
+        {
+            _caseSensitive = !_caseSensitive;
+            _caseToggle.Tone = _caseSensitive ? ButtonTone.Primary : ButtonTone.Quiet;
+            FindInEditor(true, quiet: true);
+        };
+        closeFind.Click += (_, _) => ToggleFind(false);
+        findGrid.Controls.Add(findIcon, 0, 0);
+        findGrid.Controls.Add(_findField, 1, 0);
+        findGrid.Controls.Add(_findCount, 2, 0);
+        findGrid.Controls.Add(_searchPrevious, 3, 0);
+        findGrid.Controls.Add(_searchNext, 4, 0);
+        findGrid.Controls.Add(_caseToggle, 5, 0);
+        findGrid.Controls.Add(closeFind, 6, 0);
+        _searchPanel.Controls.Add(findGrid);
+        _tips.SetToolTip(_searchPrevious, "Предыдущее совпадение (Shift+Enter)");
+        _tips.SetToolTip(_searchNext, "Следующее совпадение (Enter)");
+        _tips.SetToolTip(_caseToggle, "Учитывать регистр");
+        _tips.SetToolTip(closeFind, "Закрыть поиск (Esc)");
 
         _editorSurface = new Panel
         {
@@ -401,6 +450,8 @@ public sealed class MainForm : Form
             _statsTimer.Start();
             _syntaxPainter!.Schedule();
             _gutter!.Invalidate();
+            if (_searchPanel.Visible) FindInEditor(true, quiet: true);
+            UpdateButtons();
         };
         _editor.SelectionChanged += (_, _) => { UpdateCaret(); _gutter!.Invalidate(); };
         _editor.VScroll += (_, _) => _gutter!.Invalidate();
@@ -637,34 +688,44 @@ public sealed class MainForm : Form
     {
         var visible = show ?? !_searchPanel.Visible;
         _searchPanel.Visible = visible;
-        if (visible) { _findField.Focus(); _findField.SelectAll(); }
+        if (visible)
+        {
+            if (_editor.SelectionLength > 0 && _editor.SelectedText.Length <= 100 &&
+                !_editor.SelectedText.Contains('\n'))
+                _findField.Text = _editor.SelectedText;
+            _findField.Focus();
+            _findField.SelectAll();
+            FindInEditor(true, quiet: true);
+        }
         else _editor.Focus();
     }
 
     private void FindInEditor(bool forward, bool quiet = false)
     {
-        var query = _findField.Text;
-        if (string.IsNullOrEmpty(query))
+        _search.Update(_editor.Text, _findField.Text, _caseSensitive);
+        var total = _search.Offsets.Count;
+        if (total == 0)
         {
-            _findCount.Text = "";
+            _findCount.Text = _findField.TextLength == 0 ? "0 из 0" : "Не найдено";
+            _findCount.ForeColor = _findField.TextLength > 0 ? Theme.Danger : Theme.Muted;
+            _searchPrevious.Enabled = false;
+            _searchNext.Enabled = false;
             return;
         }
-        var source = _editor.Text;
-        var index = forward
-            ? source.IndexOf(query, Math.Min(_editor.SelectionStart + (quiet ? 0 : _editor.SelectionLength), source.Length),
-                StringComparison.OrdinalIgnoreCase)
-            : source.LastIndexOf(query, Math.Max(0, _editor.SelectionStart - 1),
-                StringComparison.OrdinalIgnoreCase);
-        if (index < 0 && forward)
-            index = source.IndexOf(query, StringComparison.OrdinalIgnoreCase);
-        if (index < 0 && !forward)
-            index = source.LastIndexOf(query, StringComparison.OrdinalIgnoreCase);
-        _findCount.Text = index >= 0 ? "Найдено" : "Нет совпадений";
+        _findCount.ForeColor = Theme.Muted;
+        _searchPrevious.Enabled = true;
+        _searchNext.Enabled = true;
+        var start = quiet ? _editor.SelectionStart :
+            forward ? _editor.SelectionStart + (_editor.SelectionLength > 0 ? 1 : 0)
+                    : _editor.SelectionStart;
+        var index = _search.Next(start, forward, includeCurrent: quiet);
         if (index >= 0)
         {
-            _editor.Select(index, query.Length);
+            _editor.Select(index, _search.Length);
             _editor.ScrollToCaret();
-            if (!quiet) _editor.Focus();
+            var ordinal = _search.OrdinalAt(index);
+            _findCount.Text = $"{ordinal} из {total}" + (_search.Truncated ? "+" : "");
+            if (!quiet) _findField.Focus();
         }
     }
 
