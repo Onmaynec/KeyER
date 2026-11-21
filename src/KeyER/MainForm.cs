@@ -51,6 +51,20 @@ public sealed class MainForm : Form
     private readonly TableLayoutPanel _root;
     private readonly TableLayoutPanel _mainLayout;
     private readonly System.Windows.Forms.Timer _statsTimer = new() { Interval = 250 };
+    private readonly SnippetSearch _search = new();
+    private readonly ToolTip _tips = new() { AutomaticDelay = 350, AutoPopDelay = 9000 };
+    private StudioButton _searchPrevious = null!;
+    private StudioButton _searchNext = null!;
+    private StudioButton _caseToggle = null!;
+    private Label _sourceBadge = null!;
+    private Label _profileDetails = null!;
+    private Label _readyStep = null!;
+    private Label _estimateLabel = null!;
+    private Panel _emptyActions = null!;
+    private StudioButton _saveSource = null!;
+    private string? _openedFilePath;
+    private bool _modified;
+    private bool _caseSensitive;
 
     private bool _registering;
     private bool _countingDown;
@@ -100,7 +114,7 @@ public sealed class MainForm : Form
         };
         var wordmark = Theme.Label("KeyER", 20F, true);
         wordmark.Left = 55; wordmark.Top = 1;
-        var version = Theme.Label("STUDIO  /  v0.6", 8F, true);
+        var version = Theme.Label("STUDIO  /  v0.7", 8F, true);
         version.Left = 57; version.Top = 35;
         version.ForeColor = Theme.Accent; version.Tag = "accent";
         var brandCaption = Theme.Label("YOUR TYPING WORKSPACE", 8F, true);
@@ -112,8 +126,8 @@ public sealed class MainForm : Form
         var navHeader = Theme.Label("РЕЖИМ РАБОТЫ", 8F, true);
         navHeader.ForeColor = Theme.Muted; navHeader.Tag = "muted";
         navHeader.Location = new Point(1, 11);
-        _textModeButton = new StudioButton { Text = "T   Обычный текст", Height = 46, Dock = DockStyle.Top };
-        _codeModeButton = new StudioButton { Text = "</>   Редактор кода", Height = 46, Dock = DockStyle.Top };
+        _textModeButton = new StudioButton { Text = "T   Обычный текст", Height = 46, Dock = DockStyle.Top, AlignLeft = true };
+        _codeModeButton = new StudioButton { Text = "</>   Редактор кода", Height = 46, Dock = DockStyle.Top, AlignLeft = true };
         var modeList = new Panel { Left = 0, Top = 40, Height = 110, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         modeList.Width = 194; modeList.BackColor = Theme.Surface; modeList.Tag = "surface";
         _textModeButton.Click += (_, _) => SwitchMode(TypingMode.Text);
@@ -138,10 +152,10 @@ public sealed class MainForm : Form
             UpdateStats();
             PersistSettings();
         };
-        var profileHint = Theme.Label("Скорость, ошибки и поведение", 8.1F);
-        profileHint.ForeColor = Theme.Muted; profileHint.Tag = "muted";
-        profileHint.Left = 1; profileHint.Top = 86;
-        profileArea.Controls.AddRange([profileTitle, _profiles, profileHint]);
+        _profileDetails = Theme.Label("Параметры выбранного профиля", 8.1F);
+        _profileDetails.ForeColor = Theme.Muted; _profileDetails.Tag = "muted";
+        _profileDetails.Left = 1; _profileDetails.Top = 86;
+        profileArea.Controls.AddRange([profileTitle, _profiles, _profileDetails]);
         profileArea.Resize += (_, _) => _profiles.Width = Math.Max(130, profileArea.ClientSize.Width - 4);
 
         _mode = new ComboBox();
@@ -188,6 +202,25 @@ public sealed class MainForm : Form
         sideFooter.Controls.AddRange([sideDivider, footerCaption, quickStack]);
         sideFooter.Resize += (_, _) => quickStack.Width = Math.Max(125, sideFooter.ClientSize.Width);
 
+        var readiness = new Panel
+        {
+            Dock = DockStyle.Top, Height = 133,
+            BackColor = Theme.Surface, Tag = "surface"
+        };
+        var readinessHeader = Theme.Label("ПЕРЕД ЗАПУСКОМ", 8F, true);
+        readinessHeader.Left = 1; readinessHeader.Top = 9;
+        readinessHeader.ForeColor = Theme.Muted; readinessHeader.Tag = "muted";
+        _readyStep = Theme.Label("○  1. Добавьте исходный текст", 8.7F, true);
+        _readyStep.Left = 1; _readyStep.Top = 39;
+        _readyStep.ForeColor = Theme.Accent; _readyStep.Tag = "accent";
+        var targetStep = Theme.Label("○  2. Выберите окно для набора", 8.4F);
+        targetStep.Left = 1; targetStep.Top = 66;
+        targetStep.ForeColor = Theme.Muted; targetStep.Tag = "muted";
+        var launchStep = Theme.Label("○  3. Запустите горячей клавишей", 8.4F);
+        launchStep.Left = 1; launchStep.Top = 93;
+        launchStep.ForeColor = Theme.Muted; launchStep.Tag = "muted";
+        readiness.Controls.AddRange([readinessHeader, _readyStep, targetStep, launchStep]);
+        _sidebar.Controls.Add(readiness);
         _sidebar.Controls.Add(profileArea);
         _sidebar.Controls.Add(nav);
         _sidebar.Controls.Add(brand);
@@ -260,9 +293,11 @@ public sealed class MainForm : Form
             Dock = DockStyle.Top, Height = 60, Padding = new Padding(18, 8, 13, 7),
             BackColor = Theme.Surface, Tag = "surface"
         };
-        var fileLabel = Theme.Label("◉  РЕДАКТОР", 9F, true);
-        fileLabel.Tag = "accent"; fileLabel.ForeColor = Theme.Accent;
-        fileLabel.Location = new Point(15, 17);
+        _sourceBadge = Theme.Label("◉  НОВЫЙ ФРАГМЕНТ", 8.7F, true);
+        _sourceBadge.Tag = "accent"; _sourceBadge.ForeColor = Theme.Accent;
+        _sourceBadge.AutoSize = false;
+        _sourceBadge.AutoEllipsis = true;
+        _sourceBadge.SetBounds(15, 17, 145, 25);
 
         _languagePicker = new ComboBox { Width = 124, Height = 29 };
         Theme.StyleCombo(_languagePicker);
@@ -302,9 +337,9 @@ public sealed class MainForm : Form
             catch (Exception ex) { SetStatus("Копирование не удалось: " + ex.Message); }
         };
         commandRow.Controls.AddRange([pasteButton, openButton, copyButton, clearButton]);
-        _languagePicker.Left = 132;
+        _languagePicker.Left = 159;
         _languagePicker.Top = 7;
-        editorToolbar.Controls.Add(fileLabel);
+        editorToolbar.Controls.Add(_sourceBadge);
         editorToolbar.Controls.Add(_languagePicker);
         editorToolbar.Controls.Add(commandRow);
         editorToolbar.Resize += (_, _) =>
