@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace KeyER;
 
 /// <summary>KeyER Studio: full responsive WinForms shell, no web runtime or paid assets.</summary>
-public sealed class MainForm : Form
+public sealed partial class MainForm : Form
 {
     private AppSettings _settings;
     private readonly TypingEngine _engine = new();
@@ -104,7 +104,7 @@ public sealed class MainForm : Form
             Padding = new Padding(18, 18, 16, 16), Tag = "surface"
         };
 
-        var brand = new Panel { Dock = DockStyle.Top, Height = 106, BackColor = Theme.Surface, Tag = "surface" };
+        var brand = new Panel { Dock = DockStyle.Top, Height = 96, BackColor = Theme.Surface, Tag = "surface" };
         var logo = new Label
         {
             Text = "K", AutoSize = false, Width = 43, Height = 43,
@@ -122,7 +122,7 @@ public sealed class MainForm : Form
         brandCaption.Left = 0; brandCaption.Top = 78;
         brand.Controls.AddRange([logo, wordmark, version, brandCaption]);
 
-        var nav = new Panel { Dock = DockStyle.Top, Height = 181, BackColor = Theme.Surface, Tag = "surface" };
+        var nav = new Panel { Dock = DockStyle.Top, Height = 162, BackColor = Theme.Surface, Tag = "surface" };
         var navHeader = Theme.Label("РЕЖИМ РАБОТЫ", 8F, true);
         navHeader.ForeColor = Theme.Muted; navHeader.Tag = "muted";
         navHeader.Location = new Point(1, 11);
@@ -138,7 +138,7 @@ public sealed class MainForm : Form
         nav.Controls.AddRange([navHeader, modeList]);
         nav.Resize += (_, _) => modeList.Width = Math.Max(130, nav.ClientSize.Width - 3);
 
-        var profileArea = new Panel { Dock = DockStyle.Top, Height = 136, BackColor = Theme.Surface, Tag = "surface" };
+        var profileArea = new Panel { Dock = DockStyle.Top, Height = 122, BackColor = Theme.Surface, Tag = "surface" };
         var profileTitle = Theme.Label("ПРОФИЛЬ ПЕЧАТИ", 8F, true);
         profileTitle.ForeColor = Theme.Muted; profileTitle.Tag = "muted";
         profileTitle.Left = 0; profileTitle.Top = 12;
@@ -169,7 +169,7 @@ public sealed class MainForm : Form
             PersistSettings();
         };
 
-        var sideFooter = new Panel { Dock = DockStyle.Bottom, Height = 172, Tag = "surface", BackColor = Theme.Surface };
+        var sideFooter = new Panel { Dock = DockStyle.Bottom, Height = 166, Tag = "surface", BackColor = Theme.Surface };
         var sideDivider = new Panel { Dock = DockStyle.Top, Height = 1, Tag = "border", BackColor = Theme.Border };
         var footerCaption = Theme.Label("БЫСТРЫЕ НАСТРОЙКИ", 8F, true);
         footerCaption.Tag = "muted"; footerCaption.ForeColor = Theme.Muted;
@@ -204,7 +204,7 @@ public sealed class MainForm : Form
 
         var readiness = new Panel
         {
-            Dock = DockStyle.Top, Height = 133,
+            Dock = DockStyle.Top, Height = 120,
             BackColor = Theme.Surface, Tag = "surface"
         };
         var readinessHeader = Theme.Label("ПЕРЕД ЗАПУСКОМ", 8F, true);
@@ -225,6 +225,15 @@ public sealed class MainForm : Form
         _sidebar.Controls.Add(nav);
         _sidebar.Controls.Add(brand);
         _sidebar.Controls.Add(sideFooter);
+        _sidebar.Resize += (_, _) =>
+        {
+            var shortWindow = _sidebar.ClientSize.Height < 635;
+            readiness.Visible = !shortWindow;
+            brand.Height = shortWindow ? 78 : 96;
+            nav.Height = shortWindow ? 143 : 162;
+            profileArea.Height = shortWindow ? 110 : 122;
+            sideFooter.Height = shortWindow ? 157 : 166;
+        };
         _root.Controls.Add(_sidebar, 0, 0);
 
         // MAIN: airy header, command-oriented editor and clear persistent run bar.
@@ -632,11 +641,24 @@ public sealed class MainForm : Form
         };
         bottomLayout.Controls.Add(actions, 0, 2);
 
+        var footerInfo = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Theme.Surface, Tag = "surface"
+        };
         _hotkeys = Theme.Label("", 8.2F);
         _hotkeys.ForeColor = Theme.Muted; _hotkeys.Tag = "muted";
         _hotkeys.Dock = DockStyle.Fill; _hotkeys.AutoSize = false;
         _hotkeys.TextAlign = ContentAlignment.BottomLeft;
-        bottomLayout.Controls.Add(_hotkeys, 0, 3);
+        _estimateLabel = Theme.Label("", 8F);
+        _estimateLabel.ForeColor = Theme.Muted; _estimateLabel.Tag = "muted";
+        _estimateLabel.Dock = DockStyle.Right; _estimateLabel.AutoSize = false;
+        _estimateLabel.Width = 202;
+        _estimateLabel.TextAlign = ContentAlignment.BottomRight;
+        footerInfo.Controls.Add(_hotkeys);
+        footerInfo.Controls.Add(_estimateLabel);
+        footerInfo.Resize += (_, _) =>
+            _estimateLabel.Visible = footerInfo.ClientSize.Width >= 665;
+        bottomLayout.Controls.Add(footerInfo, 0, 3);
         commandCard.Controls.Add(bottomLayout);
         footerPadding.Controls.Add(commandCard);
         _mainLayout.Controls.Add(footerPadding, 0, 2);
@@ -645,6 +667,11 @@ public sealed class MainForm : Form
         RefreshProfiles();
         UpdateStats();
         UpdateButtons();
+        _tips.SetToolTip(_start, "Старт с обратным отсчётом. Переключитесь в целевое окно и установите курсор.");
+        _tips.SetToolTip(_pause, "Приостановить или возобновить текущий набор");
+        _tips.SetToolTip(_stop, "Остановить набор без дальнейшего ввода");
+        _tips.SetToolTip(_saveSource, "Сохранить в отдельный файл (Ctrl+Shift+S)");
+        _tips.SetToolTip(_profiles, "Выберите скорость, характер ошибок и стиль набора");
         ApplyCompactLayout();
         UpdateVisualButtons();
         UpdateCaret();
@@ -710,6 +737,7 @@ public sealed class MainForm : Form
             _visualStudioMonitor.Dispose();
             _statsTimer.Dispose();
             _syntaxPainter.Dispose();
+            _tips.Dispose();
             _brandIcon?.Dispose();
             _ideBridge.Dispose();
             UnregisterHotkeys();
@@ -794,14 +822,10 @@ public sealed class MainForm : Form
 
     private void ShowHelp()
     {
-        MessageBox.Show(this,
-            "1. Выберите Text или Code и профиль набора.\n" +
-            "2. Вставьте текст или откройте файл.\n" +
-            "3. Перейдите в целевое приложение, поставьте курсор и нажмите Ctrl+Alt+F5.\n\n" +
-            "Ctrl+Alt+F6 — пауза / продолжить\nCtrl+Alt+F7 — остановить\n" +
-            "Ctrl+F — поиск в редакторе.\n\n" +
-            "В настройках можно выбрать оформление, скорость, ошибки и интеграцию с IDE.",
-            "KeyER — быстрый старт", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        StudioDialog.Guide(this,
+            Native.HotkeyText(_settings.StartHotkey),
+            Native.HotkeyText(_settings.PauseHotkey),
+            Native.HotkeyText(_settings.StopHotkey));
     }
 
     private void ToggleAppearance()
@@ -965,6 +989,7 @@ public sealed class MainForm : Form
         _syntaxPainter.Enabled = _settings.SyntaxHighlighting;
         _syntaxPainter.Schedule();
         UpdateVisualButtons();
+        UpdateDocumentChrome();
         UpdateCaret();
     }
 
@@ -985,12 +1010,15 @@ public sealed class MainForm : Form
     private void UpdateButtons()
     {
         var running = _engine.IsRunning;
-        _start.Enabled = !running && !_countingDown && !_ideBusy;
+        _start.Enabled = !running && !_countingDown && !_ideBusy && _editor.TextLength > 0;
         _pause.Enabled = running;
         _stop.Enabled = running || _countingDown || _ideBusy;
         _pause.Text = _engine.IsPaused ? "▶    Продолжить" : "Ⅱ    Пауза";
-        _mode.Enabled = !running && !_ideBusy;
-        _profiles.Enabled = !running && !_ideBusy;
+        _mode.Enabled = !running && !_countingDown && !_ideBusy;
+        _profiles.Enabled = !running && !_countingDown && !_ideBusy;
+        _textModeButton.Enabled = !running && !_countingDown && !_ideBusy;
+        _codeModeButton.Enabled = !running && !_countingDown && !_ideBusy;
+        _saveSource.Enabled = !running && !_countingDown && !_ideBusy && _editor.TextLength > 0;
         _languagePicker.Enabled = !running && !_ideBusy;
         _editor.ReadOnly = running || _ideBusy;
         _findField.Enabled = !running && !_ideBusy;
@@ -998,27 +1026,19 @@ public sealed class MainForm : Form
 
     private void OpenFile()
     {
-        if (_engine.IsRunning || _countingDown || _ideBusy) { SetStatus("Остановите набор перед импортом."); return; }
+        if (_engine.IsRunning || _countingDown || _ideBusy)
+        {
+            SetStatus("Остановите набор перед импортом.");
+            return;
+        }
         using var dialog = new OpenFileDialog
         {
             Title = "Открыть текст или код",
-            Filter = "Текст и код|*.txt;*.cs;*.py;*.cpp;*.h;*.hpp;*.js;*.ts;*.java;*.go;*.rs;*.html;*.css;*.json;*.xml;*.sql;*.md;*.sh;*.ps1|Все файлы|*.*"
+            Filter = "Текст и код|*.txt;*.cs;*.py;*.cpp;*.h;*.hpp;*.js;*.ts;*.java;*.go;*.rs;*.html;*.css;*.json;*.xml;*.sql;*.md;*.sh;*.ps1|Все файлы|*.*",
+            RestoreDirectory = true
         };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        try
-        {
-            var size = new FileInfo(dialog.FileName).Length;
-            if (size > 2_000_000 &&
-                MessageBox.Show(this, "Файл больше 2 МБ. Открыть? Набор может быть очень долгим.",
-                    "KeyER", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            _importing = true;
-            try { _editor.Text = File.ReadAllText(dialog.FileName); }
-            finally { _importing = false; }
-            _settings.SourceFileName = Path.GetFileName(dialog.FileName);
-            UpdateStats();
-            SetStatus($"Загружен файл: {_settings.SourceFileName}");
-        }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Ошибка чтения", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+            OpenDocument(dialog.FileName);
     }
 
     private void OpenSettings()
