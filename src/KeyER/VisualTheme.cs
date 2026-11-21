@@ -148,6 +148,12 @@ internal sealed class StudioButton : Button
         set { _tone = value; Invalidate(); }
     }
     public int CornerRadius { get; set; } = 12;
+    private bool _alignLeft;
+    public bool AlignLeft
+    {
+        get => _alignLeft;
+        set { _alignLeft = value; Invalidate(); }
+    }
 
     public StudioButton()
     {
@@ -205,9 +211,19 @@ internal sealed class StudioButton : Button
             using var pen = new Pen(Focused ? Theme.Accent : Theme.Border, Focused ? 1.8F : 1F);
             g.DrawPath(pen, shape);
         }
-        TextRenderer.DrawText(g, Text, Font, bounds, textColor,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
-            TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+        var textBounds = _alignLeft
+            ? new Rectangle(bounds.Left + 17, bounds.Top, Math.Max(0, bounds.Width - 31), bounds.Height)
+            : bounds;
+        TextRenderer.DrawText(g, Text, Font, textBounds, textColor,
+            (_alignLeft ? TextFormatFlags.Left : TextFormatFlags.HorizontalCenter) |
+            TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+            TextFormatFlags.EndEllipsis);
+        if (_alignLeft && Tone == ButtonTone.Primary && Enabled)
+        {
+            using var highlight = new SolidBrush(Color.FromArgb(185, 255, 255, 255));
+            g.FillRectangle(highlight, bounds.Left + 7, bounds.Top + 11,
+                3, Math.Max(4, bounds.Height - 22));
+        }
     }
 }
 
