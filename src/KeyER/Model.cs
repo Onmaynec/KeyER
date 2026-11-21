@@ -188,6 +188,17 @@ public sealed class AppSettings
     public TypingMode Mode { get; set; } = TypingMode.Text;
     public string SourceFileName { get; set; } = "";
     public string CodeLanguage { get; set; } = "Auto";
+
+    // UI v0.6.0 preferences are independent of typing profiles.
+    public AppearanceMode Appearance { get; set; } = AppearanceMode.Dark;
+    public AccentTheme Accent { get; set; } = AccentTheme.Iris;
+    public bool CompactMode { get; set; } = false;
+    public bool AlwaysOnTop { get; set; } = false;
+    public bool ShowLineNumbers { get; set; } = true;
+    public bool SyntaxHighlighting { get; set; } = true;
+    public int EditorFontSize { get; set; } = 11;
+    public int WindowWidth { get; set; } = 1080;
+    public int WindowHeight { get; set; } = 720;
     public Keys StartHotkey { get; set; } = Keys.Control | Keys.Alt | Keys.F5;
     public Keys PauseHotkey { get; set; } = Keys.Control | Keys.Alt | Keys.F6;
     public Keys StopHotkey { get; set; } = Keys.Control | Keys.Alt | Keys.F7;
@@ -267,6 +278,11 @@ public sealed class AppSettings
         }
         SelectedProfile ??= "";
         SourceFileName ??= "";
+        if (!Enum.IsDefined(Appearance)) Appearance = AppearanceMode.Dark;
+        if (!Enum.IsDefined(Accent)) Accent = AccentTheme.Iris;
+        EditorFontSize = Math.Clamp(EditorFontSize, 9, 18);
+        WindowWidth = Math.Clamp(WindowWidth, 760, 1920);
+        WindowHeight = Math.Clamp(WindowHeight, 520, 1200);
         if (!Enum.TryParse<CodeAnalyzer.Language>(CodeLanguage, ignoreCase: true, out var preferred) ||
             !Enum.IsDefined(preferred))
             CodeLanguage = "Auto";
