@@ -913,6 +913,7 @@ public sealed partial class MainForm : Form
                     case "muted": label.ForeColor = Theme.Muted; break;
                     case "success": label.ForeColor = Theme.Success; break;
                     case "danger": label.ForeColor = Theme.Danger; break;
+                    case "warning": label.ForeColor = Theme.Warning; break;
                     case "logo": label.ForeColor = Color.White; label.BackColor = Theme.AccentFill; break;
                     default: label.ForeColor = Theme.Foreground; break;
                 }
@@ -948,6 +949,7 @@ public sealed partial class MainForm : Form
     private void SetStatus(string value)
     {
         _status.Text = "●   " + value;
+        _tips.SetToolTip(_status, value);
         var negative = value.Contains("ошиб", StringComparison.OrdinalIgnoreCase) ||
                        value.Contains("не удалось", StringComparison.OrdinalIgnoreCase) ||
                        value.Contains("отклон", StringComparison.OrdinalIgnoreCase);
