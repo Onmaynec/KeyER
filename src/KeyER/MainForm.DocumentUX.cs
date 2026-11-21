@@ -134,7 +134,8 @@ public sealed partial class MainForm
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        if (keyData == (Keys.Control | Keys.Shift | Keys.S))
+        if (keyData == (Keys.Control | Keys.Shift | Keys.S) ||
+            keyData == (Keys.Control | Keys.S))
         {
             SaveSourceAs();
             return true;
