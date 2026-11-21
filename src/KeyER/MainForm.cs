@@ -3,47 +3,7 @@ using System.Text.Json;
 
 namespace KeyER;
 
-internal static class Theme
-{
-    public static readonly Color Background = Color.FromArgb(18, 22, 31);
-    public static readonly Color Surface = Color.FromArgb(27, 33, 46);
-    public static readonly Color Input = Color.FromArgb(21, 26, 37);
-    public static readonly Color Foreground = Color.FromArgb(231, 237, 246);
-    public static readonly Color Muted = Color.FromArgb(151, 165, 187);
-    public static readonly Color Accent = Color.FromArgb(108, 154, 255);
-    public static readonly Color Danger = Color.FromArgb(232, 112, 125);
-
-    public static void StyleButton(Button b, bool primary = false, bool danger = false)
-    {
-        b.FlatStyle = FlatStyle.Flat;
-        b.FlatAppearance.BorderSize = 0;
-        b.BackColor = danger ? Danger : primary ? Accent : Surface;
-        b.ForeColor = primary || danger ? Color.FromArgb(14, 19, 28) : Foreground;
-        b.Font = new Font("Segoe UI", 9F, primary ? FontStyle.Bold : FontStyle.Regular);
-        b.Cursor = Cursors.Hand;
-        b.Margin = new Padding(4);
-    }
-
-    public static void StyleCombo(ComboBox b)
-    {
-        b.FlatStyle = FlatStyle.Flat;
-        b.DropDownStyle = ComboBoxStyle.DropDownList;
-        b.BackColor = Surface;
-        b.ForeColor = Foreground;
-        b.Font = new Font("Segoe UI", 9.5F);
-        b.Margin = new Padding(4, 7, 4, 4);
-    }
-
-    public static Label Label(string text, float size = 9, bool bold = false)
-    {
-        return new Label
-        {
-            Text = text, ForeColor = Foreground, BackColor = Color.Transparent,
-            AutoSize = true, Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular)
-        };
-    }
-}
-
+/// <summary>KeyER Studio: full responsive WinForms shell, no web runtime or paid assets.</summary>
 public sealed class MainForm : Form
 {
     private AppSettings _settings;
@@ -54,7 +14,10 @@ public sealed class MainForm : Form
     private string? _vsCodeSessionId;
     private bool _ideBusy;
     private CancellationTokenSource? _idePreflight;
-    private readonly TextBox _editor;
+
+    private readonly RichTextBox _editor;
+    private readonly SyntaxPainter _syntaxPainter;
+    private readonly EditorGutter _gutter;
     private readonly ComboBox _mode;
     private readonly ComboBox _profiles;
     private readonly ComboBox _languagePicker;
@@ -62,53 +25,109 @@ public sealed class MainForm : Form
     private readonly Label _stats;
     private readonly Label _status;
     private readonly Label _hotkeys;
-    private readonly ProgressBar _progress;
-    private readonly Button _start;
-    private readonly Button _pause;
-    private readonly Button _stop;
+    private readonly Label _progressPercent;
+    private readonly Label _caretInfo;
+    private readonly Label _emptyHint;
+    private readonly Label _pageTitle;
+    private readonly Label _pageSubtitle;
+    private readonly Label _wordCount;
+    private readonly StudioProgress _progress;
+    private readonly StudioButton _start;
+    private readonly StudioButton _pause;
+    private readonly StudioButton _stop;
+    private readonly StudioButton _textModeButton;
+    private readonly StudioButton _codeModeButton;
+    private readonly StudioButton _themeToggle;
+    private readonly StudioButton _compactToggle;
+    private readonly StudioButton _topToggle;
+    private readonly StudioButton _searchToggle;
+    private readonly StudioCard _workspaceCard;
+    private readonly Panel _sidebar;
+    private readonly Panel _editorSurface;
+    private readonly Panel _searchPanel;
+    private readonly TextBox _findField;
+    private readonly Label _findCount;
+    private readonly TableLayoutPanel _root;
+    private readonly TableLayoutPanel _mainLayout;
+    private readonly System.Windows.Forms.Timer _statsTimer = new() { Interval = 250 };
+
     private bool _registering;
     private bool _countingDown;
+    private bool _importing;
     private CancellationTokenSource? _countdownCts;
 
     public MainForm()
     {
         _settings = SettingsStore.Load();
-        Text = "KeyER · Keyboard Emulator";
-        MinimumSize = new Size(480, 400);
-        Size = new Size(680, 600);
+        Theme.Configure(_settings.Appearance, _settings.Accent);
+
+        Text = "KeyER Studio — Text & Code";
+        MinimumSize = new Size(785, 560);
+        Size = new Size(_settings.WindowWidth, _settings.WindowHeight);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Background;
         ForeColor = Theme.Foreground;
-        Font = new Font("Segoe UI", 9.5F);
+        Font = Theme.UiFont(9.5F);
+        KeyPreview = true;
+        TopMost = _settings.AlwaysOnTop;
 
-        var header = new Panel { Dock = DockStyle.Top, Height = 77, BackColor = Theme.Background, Padding = new Padding(16, 12, 12, 4) };
-        var brand = Theme.Label("KeyER", 19F, true);
-        brand.ForeColor = Theme.Accent;
-        brand.Location = new Point(16, 12);
-        var tagline = Theme.Label("Human-like typing  /  Text & Code", 8F);
-        tagline.ForeColor = Theme.Muted;
-        tagline.Location = new Point(18, 48);
-        header.Controls.AddRange([brand, tagline]);
-
-        var toolbar = new FlowLayoutPanel
+        _root = new TableLayoutPanel
         {
-            Dock = DockStyle.Top, Height = 55, BackColor = Theme.Background,
-            Padding = new Padding(10, 3, 8, 1), WrapContents = false, AutoScroll = true
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
+            Margin = Padding.Empty, Padding = Padding.Empty, BackColor = Theme.Background
         };
-        _mode = new ComboBox { Width = 92, Height = 33 };
-        Theme.StyleCombo(_mode);
-        _mode.Items.AddRange(["Text", "Code"]);
-        _mode.SelectedIndex = (int)_settings.Mode;
-        _mode.SelectedIndexChanged += (_, _) =>
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 231));
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        // SIDE NAVIGATION: brand, mode switch, selected human profile, quick controls.
+        _sidebar = new Panel
         {
-            if (_registering) return;
-            _settings.Mode = (TypingMode)_mode.SelectedIndex;
-            UpdateStats();
-            PersistSettings();
+            Dock = DockStyle.Fill, BackColor = Theme.Surface,
+            Padding = new Padding(18, 18, 16, 16), Tag = "surface"
         };
 
-        _profiles = new ComboBox { Width = 164, Height = 33 };
+        var brand = new Panel { Dock = DockStyle.Top, Height = 106, BackColor = Theme.Surface, Tag = "surface" };
+        var logo = new Label
+        {
+            Text = "K", AutoSize = false, Width = 43, Height = 43,
+            Left = 0, Top = 3, TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = Theme.AccentFill, ForeColor = Color.White,
+            Font = Theme.UiFont(22F, FontStyle.Bold), Tag = "logo"
+        };
+        var wordmark = Theme.Label("KeyER", 20F, true);
+        wordmark.Left = 55; wordmark.Top = 1;
+        var version = Theme.Label("STUDIO  /  v0.6", 8F, true);
+        version.Left = 57; version.Top = 35;
+        version.ForeColor = Theme.Accent; version.Tag = "accent";
+        var brandCaption = Theme.Label("YOUR TYPING WORKSPACE", 8F, true);
+        brandCaption.ForeColor = Theme.Muted; brandCaption.Tag = "muted";
+        brandCaption.Left = 0; brandCaption.Top = 78;
+        brand.Controls.AddRange([logo, wordmark, version, brandCaption]);
+
+        var nav = new Panel { Dock = DockStyle.Top, Height = 181, BackColor = Theme.Surface, Tag = "surface" };
+        var navHeader = Theme.Label("РЕЖИМ РАБОТЫ", 8F, true);
+        navHeader.ForeColor = Theme.Muted; navHeader.Tag = "muted";
+        navHeader.Location = new Point(1, 11);
+        _textModeButton = new StudioButton { Text = "T   Обычный текст", Height = 46, Dock = DockStyle.Top };
+        _codeModeButton = new StudioButton { Text = "</>   Редактор кода", Height = 46, Dock = DockStyle.Top };
+        var modeList = new Panel { Left = 0, Top = 40, Height = 110, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        modeList.Width = 194; modeList.BackColor = Theme.Surface; modeList.Tag = "surface";
+        _textModeButton.Click += (_, _) => SwitchMode(TypingMode.Text);
+        _codeModeButton.Click += (_, _) => SwitchMode(TypingMode.Code);
+        // Dock order: second added appears below first after reordering.
+        modeList.Controls.Add(_codeModeButton);
+        modeList.Controls.Add(_textModeButton);
+        nav.Controls.AddRange([navHeader, modeList]);
+        nav.Resize += (_, _) => modeList.Width = Math.Max(130, nav.ClientSize.Width - 3);
+
+        var profileArea = new Panel { Dock = DockStyle.Top, Height = 136, BackColor = Theme.Surface, Tag = "surface" };
+        var profileTitle = Theme.Label("ПРОФИЛЬ ПЕЧАТИ", 8F, true);
+        profileTitle.ForeColor = Theme.Muted; profileTitle.Tag = "muted";
+        profileTitle.Left = 0; profileTitle.Top = 12;
+        _profiles = new ComboBox { Left = 0, Top = 39, Width = 192, Height = 36, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         Theme.StyleCombo(_profiles);
+        _profiles.Margin = Padding.Empty;
         _profiles.SelectedIndexChanged += (_, _) =>
         {
             if (_registering || _profiles.SelectedItem is not string value) return;
@@ -116,33 +135,125 @@ public sealed class MainForm : Form
             UpdateStats();
             PersistSettings();
         };
+        var profileHint = Theme.Label("Скорость, ошибки и поведение", 8.1F);
+        profileHint.ForeColor = Theme.Muted; profileHint.Tag = "muted";
+        profileHint.Left = 1; profileHint.Top = 86;
+        profileArea.Controls.AddRange([profileTitle, _profiles, profileHint]);
+        profileArea.Resize += (_, _) => _profiles.Width = Math.Max(130, profileArea.ClientSize.Width - 4);
 
-        var paste = new Button { Text = "Вставить", Width = 91, Height = 34 };
-        var open = new Button { Text = "Файл", Width = 77, Height = 34 };
-        var settingsButton = new Button { Text = "Настройки", Width = 112, Height = 34 };
-        foreach (var b in new[] { paste, open, settingsButton }) Theme.StyleButton(b);
-        paste.Click += (_, _) =>
+        _mode = new ComboBox();
+        _mode.Items.AddRange(["Text", "Code"]);
+        _mode.SelectedIndex = (int)_settings.Mode;
+        _mode.SelectedIndexChanged += (_, _) =>
         {
-            try
-            {
-                if (Clipboard.ContainsText() && _editor is not null) _editor.SelectedText = Clipboard.GetText();
-                else SetStatus("В буфере обмена нет текста.");
-            }
-            catch (Exception ex) { SetStatus("Не удалось вставить: " + ex.Message); }
+            if (_registering || _mode.SelectedIndex < 0) return;
+            _settings.Mode = (TypingMode)_mode.SelectedIndex;
+            UpdateStats();
+            PersistSettings();
         };
-        open.Click += (_, _) => OpenFile();
+
+        var sideFooter = new Panel { Dock = DockStyle.Bottom, Height = 172, Tag = "surface", BackColor = Theme.Surface };
+        var sideDivider = new Panel { Dock = DockStyle.Top, Height = 1, Tag = "border", BackColor = Theme.Border };
+        var footerCaption = Theme.Label("БЫСТРЫЕ НАСТРОЙКИ", 8F, true);
+        footerCaption.Tag = "muted"; footerCaption.ForeColor = Theme.Muted;
+        footerCaption.Left = 1; footerCaption.Top = 17;
+        _themeToggle = new StudioButton { Text = "◐   Светлая / тёмная", Tone = ButtonTone.Quiet, Height = 38 };
+        _compactToggle = new StudioButton { Text = "▣   Компактный вид", Tone = ButtonTone.Quiet, Height = 38 };
+        _topToggle = new StudioButton { Text = "◇   Поверх окон", Tone = ButtonTone.Quiet, Height = 38 };
+        _themeToggle.Click += (_, _) => ToggleAppearance();
+        _compactToggle.Click += (_, _) => ToggleCompact();
+        _topToggle.Click += (_, _) =>
+        {
+            _settings.AlwaysOnTop = !_settings.AlwaysOnTop;
+            TopMost = _settings.AlwaysOnTop;
+            UpdateVisualButtons();
+            PersistSettings();
+        };
+        var quickStack = new TableLayoutPanel
+        {
+            Left = 0, Top = 39, Height = 122, ColumnCount = 1, RowCount = 3,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Margin = Padding.Empty, Padding = Padding.Empty, Tag = "surface", BackColor = Theme.Surface
+        };
+        for (var i = 0; i < 3; i++) quickStack.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        quickStack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        quickStack.Controls.Add(_themeToggle, 0, 0);
+        quickStack.Controls.Add(_compactToggle, 0, 1);
+        quickStack.Controls.Add(_topToggle, 0, 2);
+        foreach (var button in new[] { _themeToggle, _compactToggle, _topToggle })
+        { button.Dock = DockStyle.Fill; button.Margin = new Padding(0, 2, 0, 2); }
+        sideFooter.Controls.AddRange([sideDivider, footerCaption, quickStack]);
+        sideFooter.Resize += (_, _) => quickStack.Width = Math.Max(125, sideFooter.ClientSize.Width);
+
+        _sidebar.Controls.Add(profileArea);
+        _sidebar.Controls.Add(nav);
+        _sidebar.Controls.Add(brand);
+        _sidebar.Controls.Add(sideFooter);
+        _root.Controls.Add(_sidebar, 0, 0);
+
+        // MAIN: airy header, command-oriented editor and clear persistent run bar.
+        _mainLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
+            Margin = Padding.Empty, Padding = Padding.Empty,
+            BackColor = Theme.Background, Tag = "background"
+        };
+        _mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 109));
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
+        _root.Controls.Add(_mainLayout, 1, 0);
+
+        var pageHeader = new Panel
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(24, 18, 22, 8),
+            BackColor = Theme.Background, Tag = "background"
+        };
+        _pageTitle = Theme.Label("Текстовый редактор", 20F, true);
+        _pageTitle.Left = 24; _pageTitle.Top = 20;
+        _pageSubtitle = Theme.Label("Подготовьте текст и запустите естественный набор", 9.2F);
+        _pageSubtitle.ForeColor = Theme.Muted; _pageSubtitle.Tag = "muted";
+        _pageSubtitle.Left = 26; _pageSubtitle.Top = 60;
+
+        var headerActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right, Width = 355, Height = 50,
+            FlowDirection = FlowDirection.LeftToRight, WrapContents = false,
+            BackColor = Theme.Background, Tag = "background",
+            Padding = new Padding(0, 7, 0, 0)
+        };
+        var settingsButton = new StudioButton { Text = "⚙   Настройки", Width = 126, Height = 38, Tone = ButtonTone.Soft };
         settingsButton.Click += (_, _) => OpenSettings();
-        toolbar.Controls.AddRange([_mode, _profiles, paste, open, settingsButton]);
+        _searchToggle = new StudioButton { Text = "⌕   Поиск", Width = 102, Height = 38, Tone = ButtonTone.Quiet };
+        _searchToggle.Click += (_, _) => ToggleFind();
+        var helpButton = new StudioButton { Text = "?   Справка", Width = 107, Height = 38, Tone = ButtonTone.Quiet };
+        helpButton.Click += (_, _) => ShowHelp();
+        headerActions.Controls.AddRange([_searchToggle, helpButton, settingsButton]);
+        pageHeader.Controls.AddRange([_pageTitle, _pageSubtitle, headerActions]);
+        _mainLayout.Controls.Add(pageHeader, 0, 0);
 
-        var strip = new Panel { Dock = DockStyle.Top, Height = 39, BackColor = Theme.Background };
-        _language = Theme.Label("Code", 8.5F);
-        _language.ForeColor = Theme.Muted;
-        _language.Location = new Point(17, 10);
-        strip.Controls.Add(_language);
+        var workPadding = new Panel
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(23, 0, 23, 12),
+            Tag = "background", BackColor = Theme.Background
+        };
+        _workspaceCard = new StudioCard
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(2), Radius = 18
+        };
+        var editorMain = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Tag = "surface" };
+        var editorToolbar = new Panel
+        {
+            Dock = DockStyle.Top, Height = 60, Padding = new Padding(18, 8, 13, 7),
+            BackColor = Theme.Surface, Tag = "surface"
+        };
+        var fileLabel = Theme.Label("◉  РЕДАКТОР", 9F, true);
+        fileLabel.Tag = "accent"; fileLabel.ForeColor = Theme.Accent;
+        fileLabel.Location = new Point(15, 17);
 
-        _languagePicker = new ComboBox { Width = 128, Height = 28, Left = 195, Top = 3 };
+        _languagePicker = new ComboBox { Width = 124, Height = 29 };
         Theme.StyleCombo(_languagePicker);
-        _languagePicker.Margin = Padding.Empty;
+        _languagePicker.Margin = new Padding(4, 6, 0, 0);
         _languagePicker.Items.AddRange(Enum.GetNames<CodeAnalyzer.Language>());
         _languagePicker.SelectedItem = _settings.CodeLanguage;
         if (_languagePicker.SelectedIndex < 0) _languagePicker.SelectedIndex = 0;
@@ -151,79 +262,222 @@ public sealed class MainForm : Form
             if (_registering || _languagePicker.SelectedItem is not string value) return;
             _settings.CodeLanguage = value;
             UpdateStats();
+            _syntaxPainter?.Schedule();
             PersistSettings();
         };
-        strip.Controls.Add(_languagePicker);
-        _stats = Theme.Label("0 символов", 8.5F);
-        _stats.ForeColor = Theme.Muted;
-        _stats.AutoSize = false;
-        _stats.TextAlign = ContentAlignment.MiddleRight;
-        _stats.Dock = DockStyle.Right;
-        _stats.Width = 170;
-        strip.Controls.Add(_stats);
 
-        var editorFrame = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(2), Margin = new Padding(12) };
-        var editorHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(13), BackColor = Theme.Input };
-        _editor = new TextBox
+        var commandRow = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill, Multiline = true, AcceptsReturn = true, AcceptsTab = true,
-            ScrollBars = ScrollBars.Both, WordWrap = false, BorderStyle = BorderStyle.None,
-            Font = new Font("Cascadia Code", 11F, FontStyle.Regular),
-            BackColor = Theme.Input, ForeColor = Theme.Foreground, ShortcutsEnabled = true
+            Dock = DockStyle.Right, Width = 411, Height = 45,
+            FlowDirection = FlowDirection.LeftToRight, WrapContents = false,
+            Padding = Padding.Empty, BackColor = Theme.Surface, Tag = "surface"
+        };
+        var pasteButton = new StudioButton { Text = "Вставить", Width = 80, Height = 36 };
+        var openButton = new StudioButton { Text = "Файл", Width = 68, Height = 36 };
+        var clearButton = new StudioButton { Text = "Очистить", Width = 85, Height = 36, Tone = ButtonTone.Quiet };
+        var copyButton = new StudioButton { Text = "Копия", Width = 75, Height = 36, Tone = ButtonTone.Quiet };
+        pasteButton.Click += (_, _) => PasteIntoEditor();
+        openButton.Click += (_, _) => OpenFile();
+        clearButton.Click += (_, _) => { if (!_editor.ReadOnly) _editor.Clear(); };
+        copyButton.Click += (_, _) =>
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(_editor.Text)) Clipboard.SetText(_editor.Text);
+                SetStatus("Текст скопирован в буфер обмена.");
+            }
+            catch (Exception ex) { SetStatus("Копирование не удалось: " + ex.Message); }
+        };
+        commandRow.Controls.AddRange([pasteButton, openButton, copyButton, clearButton]);
+        editorToolbar.Controls.Add(fileLabel);
+        editorToolbar.Controls.Add(commandRow);
+
+        var separatorTop = new Panel { Dock = DockStyle.Top, Height = 1, Tag = "border", BackColor = Theme.Border };
+        _searchPanel = new Panel
+        {
+            Dock = DockStyle.Top, Height = 43, Visible = false,
+            Padding = new Padding(18, 4, 12, 4), Tag = "surface", BackColor = Theme.Surface
+        };
+        var findIcon = Theme.Label("⌕", 15F, true);
+        findIcon.ForeColor = Theme.Accent; findIcon.Tag = "accent";
+        findIcon.Left = 10; findIcon.Top = 5;
+        _findField = new TextBox
+        {
+            BorderStyle = BorderStyle.None, Font = Theme.UiFont(10.5F),
+            BackColor = Theme.SurfaceRaised, ForeColor = Theme.Foreground,
+            PlaceholderText = "Найти в тексте...", Left = 46, Top = 11, Width = 250
+        };
+        _findField.TextChanged += (_, _) => FindInEditor(forward: true, quiet: true);
+        _findField.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) { FindInEditor(!e.Shift); e.SuppressKeyPress = true; }
+            if (e.KeyCode == Keys.Escape) { ToggleFind(); e.SuppressKeyPress = true; }
+        };
+        _findCount = Theme.Label("", 8F);
+        _findCount.ForeColor = Theme.Muted; _findCount.Tag = "muted";
+        _findCount.Left = 306; _findCount.Top = 12;
+        var closeFind = new StudioButton { Text = "✕", Width = 35, Height = 32, Tone = ButtonTone.Quiet, Dock = DockStyle.Right };
+        closeFind.Click += (_, _) => ToggleFind();
+        _searchPanel.Controls.AddRange([findIcon, _findField, _findCount, closeFind]);
+
+        _editorSurface = new Panel
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(10, 14, 17, 12),
+            BackColor = Theme.Input, Tag = "input"
+        };
+        _editor = new RichTextBox
+        {
+            Dock = DockStyle.Fill, Multiline = true, AcceptsTab = true,
+            ScrollBars = RichTextBoxScrollBars.Vertical, WordWrap = false,
+            BorderStyle = BorderStyle.None, DetectUrls = false,
+            HideSelection = false, EnableAutoDragDrop = false,
+            Font = new Font("Cascadia Code", _settings.EditorFontSize),
+            BackColor = Theme.Input, ForeColor = Theme.Foreground,
+            ShortcutsEnabled = true
         };
         _editor.TextChanged += (_, _) =>
         {
-            _settings.SourceFileName = ""; // pasted/edited snippet may no longer match imported file
-            UpdateStats();
+            if (!_importing) _settings.SourceFileName = "";
+            _emptyHint.Visible = _editor.TextLength == 0;
+            _statsTimer.Stop();
+            _statsTimer.Start();
+            _syntaxPainter.Schedule();
+            _gutter.Invalidate();
         };
-        editorHost.Controls.Add(_editor);
-        editorFrame.Controls.Add(editorHost);
-
-        var editorPadding = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14, 0, 14, 4), BackColor = Theme.Background };
-        editorPadding.Controls.Add(editorFrame);
-
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 121, BackColor = Theme.Background, Padding = new Padding(14, 7, 14, 9) };
-        _progress = new ProgressBar { Dock = DockStyle.Top, Height = 5, Style = ProgressBarStyle.Continuous, Maximum = 1000 };
-        _status = Theme.Label("Готово к работе", 8.5F);
-        _status.ForeColor = Theme.Muted;
-        _status.AutoSize = false;
-        _status.Dock = DockStyle.Top;
-        _status.Height = 27;
-        _status.TextAlign = ContentAlignment.MiddleLeft;
-        var actionRow = new FlowLayoutPanel
+        _editor.SelectionChanged += (_, _) => { UpdateCaret(); _gutter.Invalidate(); };
+        _editor.VScroll += (_, _) => _gutter.Invalidate();
+        _editor.MouseWheel += (_, _) => _gutter.Invalidate();
+        _editor.KeyDown += (_, e) =>
         {
-            Dock = DockStyle.Top, Height = 43, WrapContents = false, AutoScroll = true,
-            BackColor = Theme.Background, Padding = new Padding(0, 2, 0, 0)
+            if (e.Control && e.KeyCode == Keys.F)
+            { ToggleFind(show: true); e.SuppressKeyPress = true; }
+            if (e.KeyCode == Keys.Escape && _searchPanel.Visible)
+            { ToggleFind(); e.SuppressKeyPress = true; }
         };
-        _start = new Button { Text = "▶  Начать", Width = 122, Height = 34 };
-        _pause = new Button { Text = "Ⅱ  Пауза", Width = 105, Height = 34 };
-        _stop = new Button { Text = "■  Стоп", Width = 94, Height = 34 };
-        Theme.StyleButton(_start, primary: true);
-        Theme.StyleButton(_pause);
-        Theme.StyleButton(_stop, danger: true);
+        _gutter = new EditorGutter { Editor = _editor, Visible = _settings.ShowLineNumbers };
+        _emptyHint = Theme.Label("Ваш текст начинается здесь...\n\nВставьте материал, откройте файл или начните печатать.", 9.5F);
+        _emptyHint.ForeColor = Theme.Muted; _emptyHint.Tag = "muted";
+        _emptyHint.Left = 84; _emptyHint.Top = 36;
+        _emptyHint.Click += (_, _) => _editor.Focus();
+        _editorSurface.Controls.Add(_editor);
+        _editorSurface.Controls.Add(_gutter);
+        _editorSurface.Controls.Add(_emptyHint);
+        _emptyHint.BringToFront();
+        _syntaxPainter = new SyntaxPainter(_editor)
+        {
+            IsCode = _settings.Mode == TypingMode.Code,
+            Enabled = _settings.SyntaxHighlighting,
+            FileName = _settings.SourceFileName,
+            Language = _settings.CodeLanguage
+        };
+        _statsTimer.Tick += (_, _) => { _statsTimer.Stop(); UpdateStats(); };
+
+        var editorMeta = new Panel
+        {
+            Dock = DockStyle.Bottom, Height = 36, Padding = new Padding(16, 5, 14, 5),
+            Tag = "surface", BackColor = Theme.Surface
+        };
+        _language = Theme.Label("Text", 8.5F, true);
+        _language.ForeColor = Theme.Accent; _language.Tag = "accent";
+        _language.Dock = DockStyle.Left;
+        _language.Width = 205; _language.AutoSize = false;
+        _language.TextAlign = ContentAlignment.MiddleLeft;
+        _caretInfo = Theme.Label("Ln 1, Col 1", 8.5F);
+        _caretInfo.ForeColor = Theme.Muted; _caretInfo.Tag = "muted";
+        _caretInfo.Dock = DockStyle.Right;
+        _caretInfo.AutoSize = false; _caretInfo.Width = 115;
+        _caretInfo.TextAlign = ContentAlignment.MiddleRight;
+        _stats = Theme.Label("0 символов", 8.5F);
+        _stats.ForeColor = Theme.Muted; _stats.Tag = "muted";
+        _stats.AutoSize = false; _stats.Width = 166; _stats.Dock = DockStyle.Right;
+        _stats.TextAlign = ContentAlignment.MiddleRight;
+        _wordCount = Theme.Label("0 слов", 8.5F);
+        _wordCount.ForeColor = Theme.Muted; _wordCount.Tag = "muted";
+        _wordCount.AutoSize = false; _wordCount.Width = 105; _wordCount.Dock = DockStyle.Right;
+        _wordCount.TextAlign = ContentAlignment.MiddleRight;
+        editorMeta.Controls.AddRange([_language, _caretInfo, _stats, _wordCount]);
+
+        editorMain.Controls.Add(_editorSurface);
+        editorMain.Controls.Add(_searchPanel);
+        editorMain.Controls.Add(separatorTop);
+        editorMain.Controls.Add(editorToolbar);
+        editorMain.Controls.Add(editorMeta);
+        _workspaceCard.Controls.Add(editorMain);
+        workPadding.Controls.Add(_workspaceCard);
+        _mainLayout.Controls.Add(workPadding, 0, 1);
+
+        var footerPadding = new Panel
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(23, 0, 23, 20),
+            BackColor = Theme.Background, Tag = "background"
+        };
+        var commandCard = new StudioCard { Dock = DockStyle.Fill, Radius = 18, Padding = new Padding(18, 11, 18, 9) };
+        var bottomLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4,
+            BackColor = Theme.Surface, Tag = "surface", Margin = Padding.Empty, Padding = Padding.Empty
+        };
+        bottomLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 9));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+
+        var statusRow = new Panel { Dock = DockStyle.Fill, Tag = "surface", BackColor = Theme.Surface };
+        _status = Theme.Label("●   Готово к работе", 9.1F, true);
+        _status.ForeColor = Theme.Success; _status.Tag = "success";
+        _status.Dock = DockStyle.Fill; _status.AutoSize = false;
+        _status.TextAlign = ContentAlignment.MiddleLeft;
+        _progressPercent = Theme.Label("0%", 9F, true);
+        _progressPercent.ForeColor = Theme.Muted; _progressPercent.Tag = "muted";
+        _progressPercent.Dock = DockStyle.Right; _progressPercent.AutoSize = false;
+        _progressPercent.TextAlign = ContentAlignment.MiddleRight; _progressPercent.Width = 72;
+        statusRow.Controls.Add(_status);
+        statusRow.Controls.Add(_progressPercent);
+        bottomLayout.Controls.Add(statusRow, 0, 0);
+
+        _progress = new StudioProgress { Dock = DockStyle.Fill, Maximum = 1000, Value = 0 };
+        bottomLayout.Controls.Add(_progress, 0, 1);
+
+        var actions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, Tag = "surface", BackColor = Theme.Surface,
+            WrapContents = false, AutoScroll = true,
+            Padding = new Padding(0, 9, 0, 1)
+        };
+        _start = new StudioButton { Text = "▶    Начать набор", Width = 184, Height = 44, Tone = ButtonTone.Primary };
+        _pause = new StudioButton { Text = "Ⅱ    Пауза", Width = 141, Height = 44, Tone = ButtonTone.Soft };
+        _stop = new StudioButton { Text = "■    Остановить", Width = 151, Height = 44, Tone = ButtonTone.Outline };
         _start.Click += async (_, _) => await StartWithCountdownAsync();
         _pause.Click += (_, _) => { _engine.TogglePause(); UpdateButtons(); };
         _stop.Click += (_, _) => StopTyping();
-        actionRow.Controls.AddRange([_start, _pause, _stop]);
+        actions.Controls.AddRange([_start, _pause, _stop]);
+        bottomLayout.Controls.Add(actions, 0, 2);
 
-        _hotkeys = Theme.Label("", 8F);
-        _hotkeys.ForeColor = Theme.Muted;
-        _hotkeys.AutoSize = false;
-        _hotkeys.Dock = DockStyle.Bottom;
-        _hotkeys.Height = 20;
-        footer.Controls.AddRange([_hotkeys, actionRow, _status, _progress]);
-        // Reverse dock-order is not relied upon for the action controls:
-        footer.Controls.SetChildIndex(_progress, 0);
-        footer.Controls.SetChildIndex(_status, 1);
-        footer.Controls.SetChildIndex(actionRow, 2);
+        _hotkeys = Theme.Label("", 8.2F);
+        _hotkeys.ForeColor = Theme.Muted; _hotkeys.Tag = "muted";
+        _hotkeys.Dock = DockStyle.Fill; _hotkeys.AutoSize = false;
+        _hotkeys.TextAlign = ContentAlignment.BottomLeft;
+        bottomLayout.Controls.Add(_hotkeys, 0, 3);
+        commandCard.Controls.Add(bottomLayout);
+        footerPadding.Controls.Add(commandCard);
+        _mainLayout.Controls.Add(footerPadding, 0, 2);
+        Controls.Add(_root);
 
-        Controls.AddRange([editorPadding, footer, strip, toolbar, header]);
         RefreshProfiles();
         UpdateStats();
         UpdateButtons();
+        ApplyCompactLayout();
+        UpdateVisualButtons();
+        UpdateCaret();
+
         _engine.StatusChanged += message => Ui(() => SetStatus(message));
         _engine.ProgressChanged += (completed, total) => Ui(() =>
-            _progress.Value = Math.Clamp(total == 0 ? 0 : (int)((long)completed * 1000 / total), 0, 1000));
+        {
+            var percent = Math.Clamp(total == 0 ? 0 : (int)((long)completed * 1000 / total), 0, 1000);
+            _progress.Value = percent;
+            _progressPercent.Text = $"{percent / 10.0:0.0}%";
+        });
 
         _ideBridge.ConnectionChanged += connected => Ui(() =>
         {
@@ -257,6 +511,14 @@ public sealed class MainForm : Form
         {
             RegisterHotkeys(showWarnings: true);
             _ideBridge.Start();
+            _syntaxPainter.Schedule();
+        };
+        ResizeEnd += (_, _) =>
+        {
+            if (WindowState != FormWindowState.Normal) return;
+            _settings.WindowWidth = Width;
+            _settings.WindowHeight = Height;
+            PersistSettings();
         };
         FormClosing += (_, _) =>
         {
@@ -265,9 +527,193 @@ public sealed class MainForm : Form
             _engine.Stop();
             _visualStudioMonitor.Stop();
             _visualStudioMonitor.Dispose();
+            _statsTimer.Dispose();
+            _syntaxPainter.Dispose();
             _ideBridge.Dispose();
             UnregisterHotkeys();
         };
+    }
+
+    private void SwitchMode(TypingMode mode)
+    {
+        if (_engine.IsRunning || _countingDown || _ideBusy) return;
+        _settings.Mode = mode;
+        _registering = true;
+        _mode.SelectedIndex = (int)mode;
+        _registering = false;
+        UpdateStats();
+        PersistSettings();
+    }
+
+    private void UpdateCaret()
+    {
+        if (_editor is null || _caretInfo is null) return;
+        var index = _editor.SelectionStart;
+        var line = _editor.GetLineFromCharIndex(index);
+        var offset = _editor.GetFirstCharIndexFromLine(line);
+        _caretInfo.Text = $"Ln {line + 1}, Col {Math.Max(0, index - offset) + 1}";
+    }
+
+    private void ToggleFind(bool? show = null)
+    {
+        var visible = show ?? !_searchPanel.Visible;
+        _searchPanel.Visible = visible;
+        if (visible) { _findField.Focus(); _findField.SelectAll(); }
+        else _editor.Focus();
+    }
+
+    private void FindInEditor(bool forward, bool quiet = false)
+    {
+        var query = _findField.Text;
+        if (string.IsNullOrEmpty(query))
+        {
+            _findCount.Text = "";
+            return;
+        }
+        var source = _editor.Text;
+        var index = forward
+            ? source.IndexOf(query, Math.Min(_editor.SelectionStart + (quiet ? 0 : _editor.SelectionLength), source.Length),
+                StringComparison.OrdinalIgnoreCase)
+            : source.LastIndexOf(query, Math.Max(0, _editor.SelectionStart - 1),
+                StringComparison.OrdinalIgnoreCase);
+        if (index < 0 && forward)
+            index = source.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+        if (index < 0 && !forward)
+            index = source.LastIndexOf(query, StringComparison.OrdinalIgnoreCase);
+        _findCount.Text = index >= 0 ? "Найдено" : "Нет совпадений";
+        if (index >= 0)
+        {
+            _editor.Select(index, query.Length);
+            _editor.ScrollToCaret();
+            if (!quiet) _editor.Focus();
+        }
+    }
+
+    private void PasteIntoEditor()
+    {
+        if (_editor.ReadOnly) return;
+        try
+        {
+            if (Clipboard.ContainsText()) _editor.SelectedText = Clipboard.GetText();
+            else SetStatus("В буфере обмена нет текста.");
+        }
+        catch (Exception ex) { SetStatus("Не удалось вставить: " + ex.Message); }
+    }
+
+    private void ShowHelp()
+    {
+        MessageBox.Show(this,
+            "1. Выберите Text или Code и профиль набора.\n" +
+            "2. Вставьте текст или откройте файл.\n" +
+            "3. Перейдите в целевое приложение, поставьте курсор и нажмите Ctrl+Alt+F5.\n\n" +
+            "Ctrl+Alt+F6 — пауза / продолжить\nCtrl+Alt+F7 — остановить\n" +
+            "Ctrl+F — поиск в редакторе.\n\n" +
+            "В настройках можно выбрать оформление, скорость, ошибки и интеграцию с IDE.",
+            "KeyER — быстрый старт", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void ToggleAppearance()
+    {
+        _settings.Appearance = Theme.IsLight ? AppearanceMode.Dark : AppearanceMode.Light;
+        ApplyAppearance();
+        PersistSettings();
+    }
+
+    private void ToggleCompact()
+    {
+        _settings.CompactMode = !_settings.CompactMode;
+        ApplyCompactLayout();
+        UpdateVisualButtons();
+        PersistSettings();
+    }
+
+    private void ApplyCompactLayout()
+    {
+        var compact = _settings.CompactMode;
+        _root.ColumnStyles[0].Width = compact ? 191 : 231;
+        _mainLayout.RowStyles[0].Height = compact ? 83 : 109;
+        _mainLayout.RowStyles[2].Height = compact ? 143 : 165;
+        _pageTitle.Font = Theme.UiFont(compact ? 17F : 20F, FontStyle.Bold);
+        _pageSubtitle.Visible = !compact;
+    }
+
+    private void UpdateVisualButtons()
+    {
+        _textModeButton.Tone = _settings.Mode == TypingMode.Text ? ButtonTone.Primary : ButtonTone.Quiet;
+        _codeModeButton.Tone = _settings.Mode == TypingMode.Code ? ButtonTone.Primary : ButtonTone.Quiet;
+        _topToggle.Text = _settings.AlwaysOnTop ? "◆   Поверх окон: ВКЛ" : "◇   Поверх окон";
+        _compactToggle.Text = _settings.CompactMode ? "▤   Обычный вид" : "▣   Компактный вид";
+        _themeToggle.Text = Theme.IsLight ? "☾   Тёмная тема" : "◐   Светлая тема";
+        _topToggle.Invalidate();
+    }
+
+    private void ApplyAppearance()
+    {
+        Theme.Configure(_settings.Appearance, _settings.Accent);
+        BackColor = Theme.Background;
+        ForeColor = Theme.Foreground;
+        ApplyColorsRecursive(this);
+        _syntaxPainter.Schedule();
+        UpdateVisualButtons();
+        Invalidate(true);
+    }
+
+    private static void ApplyColorsRecursive(Control control)
+    {
+        foreach (Control child in control.Controls)
+        {
+            if (child is StudioButton b) b.Invalidate();
+            else if (child is StudioProgress || child is EditorGutter) child.Invalidate();
+            else if (child is StudioCard card)
+            {
+                card.BackColor = Theme.Surface;
+                card.Invalidate();
+            }
+            else if (child is ComboBox combo)
+            {
+                combo.BackColor = Theme.SurfaceRaised;
+                combo.ForeColor = Theme.Foreground;
+            }
+            else if (child is RichTextBox rich)
+            {
+                rich.BackColor = Theme.Input;
+                rich.ForeColor = Theme.Foreground;
+            }
+            else if (child is TextBox box)
+            {
+                box.BackColor = Theme.SurfaceRaised;
+                box.ForeColor = Theme.Foreground;
+            }
+            else if (child is Label label)
+            {
+                switch (label.Tag as string)
+                {
+                    case "accent": label.ForeColor = Theme.Accent; break;
+                    case "muted": label.ForeColor = Theme.Muted; break;
+                    case "success": label.ForeColor = Theme.Success; break;
+                    case "logo": label.ForeColor = Color.White; label.BackColor = Theme.AccentFill; break;
+                    default: label.ForeColor = Theme.Foreground; break;
+                }
+            }
+            else if (child is Panel panel)
+            {
+                panel.BackColor = (panel.Tag as string) switch
+                {
+                    "surface" => Theme.Surface, "border" => Theme.Border,
+                    "input" => Theme.Input, "raised" => Theme.SurfaceRaised,
+                    _ => Theme.Background
+                };
+            }
+            else if (child is TableLayoutPanel or FlowLayoutPanel)
+            {
+                child.BackColor = (child.Tag as string) switch
+                {
+                    "surface" => Theme.Surface, "input" => Theme.Input,
+                    _ => Theme.Background
+                };
+            }
+            ApplyColorsRecursive(child);
+        }
     }
 
     private void Ui(Action action)
