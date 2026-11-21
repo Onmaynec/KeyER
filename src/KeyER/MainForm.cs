@@ -278,12 +278,12 @@ public sealed class MainForm : Form
         var copyButton = new StudioButton { Text = "Копия", Width = 75, Height = 36, Tone = ButtonTone.Quiet };
         pasteButton.Click += (_, _) => PasteIntoEditor();
         openButton.Click += (_, _) => OpenFile();
-        clearButton.Click += (_, _) => { if (!_editor.ReadOnly) _editor.Clear(); };
+        clearButton.Click += (_, _) => { if (!_editor!.ReadOnly) _editor.Clear(); };
         copyButton.Click += (_, _) =>
         {
             try
             {
-                if (!string.IsNullOrEmpty(_editor.Text)) Clipboard.SetText(_editor.Text);
+                if (!string.IsNullOrEmpty(_editor!.Text)) Clipboard.SetText(_editor.Text);
                 SetStatus("Текст скопирован в буфер обмена.");
             }
             catch (Exception ex) { SetStatus("Копирование не удалось: " + ex.Message); }
@@ -338,15 +338,15 @@ public sealed class MainForm : Form
         _editor.TextChanged += (_, _) =>
         {
             if (!_importing) _settings.SourceFileName = "";
-            _emptyHint.Visible = _editor.TextLength == 0;
+            _emptyHint!.Visible = _editor.TextLength == 0;
             _statsTimer.Stop();
             _statsTimer.Start();
-            _syntaxPainter.Schedule();
-            _gutter.Invalidate();
+            _syntaxPainter!.Schedule();
+            _gutter!.Invalidate();
         };
-        _editor.SelectionChanged += (_, _) => { UpdateCaret(); _gutter.Invalidate(); };
-        _editor.VScroll += (_, _) => _gutter.Invalidate();
-        _editor.MouseWheel += (_, _) => _gutter.Invalidate();
+        _editor.SelectionChanged += (_, _) => { UpdateCaret(); _gutter!.Invalidate(); };
+        _editor.VScroll += (_, _) => _gutter!.Invalidate();
+        _editor.MouseWheel += (_, _) => _gutter!.Invalidate();
         _editor.KeyDown += (_, e) =>
         {
             if (e.Control && e.KeyCode == Keys.F)
@@ -436,7 +436,7 @@ public sealed class MainForm : Form
         statusRow.Controls.Add(_progressPercent);
         bottomLayout.Controls.Add(statusRow, 0, 0);
 
-        _progress = new StudioProgress { Dock = DockStyle.Fill, Maximum = 1000, Value = 0 };
+        _progress = new StudioProgress { Dock = DockStyle.Fill, Value = 0 };
         bottomLayout.Controls.Add(_progress, 0, 1);
 
         var actions = new FlowLayoutPanel
