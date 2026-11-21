@@ -816,6 +816,7 @@ internal static class Program
                 {
                     IsCode = true, Enabled = true, FileName = "test.cs"
                 };
+                _ = editor.Handle; // Ensure the native RichEdit control exists on STA.
                 painter.Render();
                 editor.Select(0, 5);
                 Assert(editor.SelectionColor != Theme.Foreground,
