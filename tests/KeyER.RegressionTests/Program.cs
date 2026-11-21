@@ -59,6 +59,7 @@ internal static class Program
                 var directory = Path.GetFullPath("artifacts/ui-preview");
                 Directory.CreateDirectory(directory);
 
+                Environment.SetEnvironmentVariable("KEYER_UI_PREVIEW", "1");
                 using var main = new MainForm
                 {
                     StartPosition = FormStartPosition.Manual,
