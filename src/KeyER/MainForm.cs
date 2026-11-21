@@ -736,8 +736,17 @@ public sealed partial class MainForm : Form
             _settings.WindowHeight = Height;
             PersistSettings();
         };
-        FormClosing += (_, _) =>
+        FormClosing += (_, e) =>
         {
+            if (Environment.GetEnvironmentVariable("KEYER_UI_PREVIEW") != "1" &&
+                _modified && _editor.TextLength > 0 &&
+                !StudioDialog.Confirm(this, "Закрыть KeyER?",
+                    "В редакторе остался несохранённый текст. При закрытии KeyER он будет потерян.\n\n" +
+                    "Можно отменить закрытие и сохранить исходник через Ctrl+S."))
+            {
+                e.Cancel = true;
+                return;
+            }
             _idePreflight?.Cancel();
             _countdownCts?.Cancel();
             _engine.Stop();
