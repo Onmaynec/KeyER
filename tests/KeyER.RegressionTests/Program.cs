@@ -106,6 +106,18 @@ internal static class Program
                     bitmap.Save(Path.Combine(directory, "KeyER-Studio-Settings.png"));
                 }
 
+                var appearanceTab = Descendants(settings).OfType<StudioButton>()
+                    .FirstOrDefault(b => b.Text.Contains("Оформление", StringComparison.Ordinal));
+                appearanceTab?.PerformClick();
+                Application.DoEvents();
+                settings.Refresh();
+                Application.DoEvents();
+                using (var bitmap = new Bitmap(settings.Width, settings.Height))
+                {
+                    settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "KeyER-Studio-Appearance.png"));
+                }
+
                 settings.Close();
                 main.Close();
                 result.TrySetResult(0);
