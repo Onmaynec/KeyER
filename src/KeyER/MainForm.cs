@@ -8,6 +8,7 @@ public sealed class MainForm : Form
 {
     private AppSettings _settings;
     private readonly TypingEngine _engine = new();
+    private Icon? _brandIcon;
     private readonly IdeBridgeServer _ideBridge = new();
     private readonly System.Windows.Forms.Timer _visualStudioMonitor = new() { Interval = 300 };
     private VisualStudioDteSession? _visualStudioSession;
@@ -60,6 +61,8 @@ public sealed class MainForm : Form
     {
         _settings = SettingsStore.Load();
         Theme.Configure(_settings.Appearance, _settings.Accent);
+        _brandIcon = BrandIcon.Create();
+        Icon = _brandIcon;
 
         Text = "KeyER Studio — Text & Code";
         MinimumSize = new Size(785, 560);
@@ -566,6 +569,7 @@ public sealed class MainForm : Form
             _visualStudioMonitor.Dispose();
             _statsTimer.Dispose();
             _syntaxPainter.Dispose();
+            _brandIcon?.Dispose();
             _ideBridge.Dispose();
             UnregisterHotkeys();
         };
@@ -687,6 +691,10 @@ public sealed class MainForm : Form
     private void ApplyAppearance()
     {
         Theme.Configure(_settings.Appearance, _settings.Accent);
+        var previousIcon = _brandIcon;
+        _brandIcon = BrandIcon.Create();
+        Icon = _brandIcon;
+        previousIcon?.Dispose();
         BackColor = Theme.Background;
         ForeColor = Theme.Foreground;
         ApplyColorsRecursive(this);
