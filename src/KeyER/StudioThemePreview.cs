@@ -40,7 +40,7 @@ internal sealed class StudioThemePreview : Control
         var light = _appearance switch
         {
             AppearanceMode.Light => true,
-            AppearanceMode.System => SystemInformation.HighContrast == false && Theme.IsLight,
+            AppearanceMode.System => Theme.SystemIsLight,
             _ => false
         };
         var background = light ? Color.FromArgb(244, 246, 252) : Color.FromArgb(12, 15, 26);
