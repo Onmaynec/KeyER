@@ -29,6 +29,8 @@ internal static class Program
             await Check("Start waits for hotkey modifiers to be released", ModifierRelease);
             await Check("Start rejects unrelated window", RejectWrongWindow);
             await Check("Settings validation handles malformed values", SettingsValidation);
+            await Check("Studio 0.6: palette and appearance validation", StudioAppearanceValidation);
+            await Check("Studio 0.6: main window/settings construction on STA", StudioUiSmoke);
             await Check("IDE 0.4: same-user pipe roundtrip and session invalidation", IdePipeRoundTrip);
             await Check("IDE 0.4: verified mode remains opt-in", IdeSettingsSafety);
             await Check("Human 0.5: style presets and settings migration", HumanStylePresets);
@@ -664,6 +666,83 @@ internal static class Program
             out _, out var message), "Invalid target window must be rejected");
         Assert(message.Length > 0, "DTE rejection must be explained");
         return Task.CompletedTask;
+    }
+
+    private static Task StudioAppearanceValidation()
+    {
+        Theme.Configure(AppearanceMode.Dark, AccentTheme.Iris);
+        var darkBackground = Theme.Background;
+        var darkAccent = Theme.Accent;
+        Theme.Configure(AppearanceMode.Light, AccentTheme.Iris);
+        Assert(Theme.Background != darkBackground, "Dark and light palettes must differ.");
+        Assert(Theme.Accent != darkAccent, "Accent should be contrast-adjusted in light mode.");
+        Theme.Configure(AppearanceMode.Dark, AccentTheme.Mint);
+        Assert(Theme.Accent != darkAccent, "Changing accent should update the palette.");
+
+        var invalid = new AppSettings
+        {
+            Appearance = (AppearanceMode)99,
+            Accent = (AccentTheme)99,
+            EditorFontSize = 100,
+            WindowWidth = 100,
+            WindowHeight = 100
+        };
+        invalid.Validate();
+        Assert(invalid.Appearance == AppearanceMode.Dark, "Invalid appearance reset.");
+        Assert(invalid.Accent == AccentTheme.Iris, "Invalid accent reset.");
+        Assert(invalid.EditorFontSize == 18, "Font clamped.");
+        Assert(invalid.WindowWidth >= 760 && invalid.WindowHeight >= 520, "Valid window geometry.");
+        return Task.CompletedTask;
+    }
+
+    private static Task StudioUiSmoke()
+    {
+        Exception? issue = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var main = new MainForm();
+                Assert(main.Width >= 785 && main.Height >= 560, "Studio window dimensions.");
+
+                var editor = Descendants(main).OfType<RichTextBox>().Single();
+                Assert(editor.AcceptsTab && !editor.WordWrap, "Editor usability.");
+                Assert(Descendants(main).OfType<EditorGutter>().Count() == 1,
+                    "Dedicated line-number gutter.");
+                Assert(Descendants(main).OfType<StudioButton>().Count() >= 10,
+                    "Owner-painted primary and quick actions.");
+                Assert(Descendants(main).OfType<StudioProgress>().Count() == 1,
+                    "Custom progress bar.");
+                Assert(Descendants(main).OfType<ComboBox>().Any(),
+                    "Profile and language selectors.");
+
+                using var settings = new SettingsForm(new AppSettings());
+                Assert(Descendants(settings).OfType<StudioButton>().Count() >= 6,
+                    "Settings side navigation and save controls.");
+                Assert(Descendants(settings).OfType<NumericUpDown>().Any(),
+                    "Editable profile parameters must remain available.");
+
+                editor.Text = "hello\nworld";
+                Assert(editor.Text.Contains("world"), "Rich editor should accept input.");
+            }
+            catch (Exception e) { issue = e; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(18)))
+            throw new Exception("Studio UI smoke test timed out.");
+        if (issue is not null) throw new Exception("Studio UI smoke failure.", issue);
+        return Task.CompletedTask;
+    }
+
+    private static IEnumerable<Control> Descendants(Control root)
+    {
+        foreach (Control child in root.Controls)
+        {
+            yield return child;
+            foreach (var nested in Descendants(child)) yield return nested;
+        }
     }
 
     private static Task SettingsValidation()
