@@ -553,6 +553,7 @@ public sealed class MainForm : Form
             RegisterHotkeys(showWarnings: true);
             _ideBridge.Start();
             _syntaxPainter.Schedule();
+            BeginInvoke(new Action(() => { if (!_editor.IsDisposed) _editor.Focus(); }));
         };
         ResizeEnd += (_, _) =>
         {
