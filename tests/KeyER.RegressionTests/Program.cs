@@ -798,8 +798,16 @@ internal static class Program
                 Assert(Descendants(settings).OfType<NumericUpDown>().Any(),
                     "Editable profile parameters must remain available.");
 
-                editor.Text = "hello\nworld";
-                Assert(editor.Text.Contains("world"), "Rich editor should accept input.");
+                editor.Text = "using System;\nclass Example { int Count = 7; }";
+                Assert(editor.Text.Contains("Example"), "Rich editor should accept input.");
+                using var painter = new SyntaxPainter(editor)
+                {
+                    IsCode = true, Enabled = true, FileName = "test.cs"
+                };
+                painter.Render();
+                editor.Select(0, 5);
+                Assert(editor.SelectionColor != Theme.Foreground,
+                    "C# 'using' should be syntax highlighted.");
             }
             catch (Exception e) { issue = e; }
         });
