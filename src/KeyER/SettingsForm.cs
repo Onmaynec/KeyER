@@ -20,6 +20,9 @@ public sealed class SettingsForm : Form
     private Label _pageHeading = null!;
     private Label _pageDescription = null!;
     private string _profileSection = "Поведение";
+    private TextBox _settingsFind = null!;
+    private Label _settingsFindStatus = null!;
+    private StudioThemePreview _themePreview = null!;
 
     public SettingsForm(AppSettings source)
     {
@@ -84,6 +87,7 @@ public sealed class SettingsForm : Form
             {
                 Text = title, Width = 172, Height = 45,
                 Margin = new Padding(0, 3, 0, 3),
+                AlignLeft = true,
                 Tone = ButtonTone.Quiet
             };
             navButton.Click += (_, _) => ShowCategory(name);
@@ -109,7 +113,41 @@ public sealed class SettingsForm : Form
         _pageHeading.Left = 0; _pageHeading.Top = 34;
         _pageDescription = Theme.Label("Управляйте характером печати и привычками.", 8.8F);
         _pageDescription.ForeColor = Theme.Muted; _pageDescription.Left = 1; _pageDescription.Top = 76;
-        pageHeader.Controls.AddRange([caption, _pageHeading, _pageDescription]);
+        _settingsFind = new TextBox
+        {
+            Width = 188, Height = 30, Font = Theme.UiFont(9.5F),
+            BackColor = Theme.SurfaceRaised, ForeColor = Theme.Foreground,
+            BorderStyle = BorderStyle.FixedSingle, PlaceholderText = "⌕  Поиск параметра",
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Top = 37
+        };
+        _settingsFind.TextChanged += (_, _) => FilterProfileFields();
+        _settingsFind.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Escape)
+            {
+                _settingsFind.Clear();
+                e.SuppressKeyPress = true;
+            }
+        };
+        _settingsFindStatus = Theme.Label("", 8F);
+        _settingsFindStatus.ForeColor = Theme.Muted;
+        _settingsFindStatus.AutoSize = false;
+        _settingsFindStatus.TextAlign = ContentAlignment.MiddleRight;
+        _settingsFindStatus.Width = 190;
+        _settingsFindStatus.Height = 22;
+        _settingsFindStatus.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        pageHeader.Controls.AddRange([caption, _pageHeading, _pageDescription,
+            _settingsFind, _settingsFindStatus]);
+        pageHeader.Resize += (_, _) =>
+        {
+            _settingsFind.Left = Math.Max(285, pageHeader.ClientSize.Width - 195);
+            _settingsFindStatus.Left = Math.Max(285, pageHeader.ClientSize.Width - 196);
+            _settingsFindStatus.Top = 70;
+            _settingsFind.Visible = pageHeader.ClientSize.Width >= 540 &&
+                _profileSection is "Поведение" or "Text" or "Code";
+            _settingsFindStatus.Visible = _settingsFind.Visible;
+        };
 
         var paneFrame = new StudioCard
         {
@@ -210,12 +248,20 @@ public sealed class SettingsForm : Form
             appearanceGrid.Controls.Add(control, 1, row);
         }
 
+        _themePreview = new StudioThemePreview
+        {
+            Dock = DockStyle.Top, Height = 196,
+            PreviewAppearance = _working.Appearance, PreviewAccent = _working.Accent
+        };
         var appearanceSelect = new ComboBox { Width = 194 };
         Theme.StyleCombo(appearanceSelect);
         appearanceSelect.Items.AddRange(["Тёмная", "Светлая", "Как в Windows"]);
         appearanceSelect.SelectedIndex = (int)_working.Appearance;
         appearanceSelect.SelectedIndexChanged += (_, _) =>
+        {
             _working.Appearance = (AppearanceMode)appearanceSelect.SelectedIndex;
+            _themePreview.PreviewAppearance = _working.Appearance;
+        };
         AddOption("Цветовая тема", appearanceSelect);
 
         var accentSelect = new ComboBox { Width = 194 };
@@ -223,7 +269,10 @@ public sealed class SettingsForm : Form
         accentSelect.Items.AddRange(["Iris · фиолетовый", "Ocean · синий", "Mint · зелёный", "Amber · янтарный"]);
         accentSelect.SelectedIndex = (int)_working.Accent;
         accentSelect.SelectedIndexChanged += (_, _) =>
+        {
             _working.Accent = (AccentTheme)accentSelect.SelectedIndex;
+            _themePreview.PreviewAccent = _working.Accent;
+        };
         AddOption("Акцент интерфейса", accentSelect);
 
         CheckBox Toggle(string text, bool value, Action<bool> changed)
@@ -251,15 +300,23 @@ public sealed class SettingsForm : Form
         fontSize.ValueChanged += (_, _) => _working.EditorFontSize = (int)fontSize.Value;
         AddOption("Размер текста в редакторе", fontSize);
 
-        var preview = new StudioCard { Dock = DockStyle.Top, Height = 132, Radius = 13, Outline = false };
-        var previewHeadline = Theme.Label("КОМФОРТ ДЛЯ ДОЛГОЙ РАБОТЫ", 9F, true);
-        previewHeadline.ForeColor = Theme.Accent; previewHeadline.Left = 18; previewHeadline.Top = 18;
-        var previewBody = Theme.Label(
-            "Настройки оформления применятся после нажатия «Сохранить».\n" +
-            "Текст и настройки профилей при смене темы не теряются.", 9.2F);
-        previewBody.ForeColor = Theme.Muted; previewBody.Left = 18; previewBody.Top = 50;
-        preview.Controls.AddRange([previewHeadline, previewBody]);
-        appearancePane.Controls.Add(preview);
+        var previewCaption = Theme.Label("ЖИВОЙ ПРЕДПРОСМОТР ТЕМЫ", 8.2F, true);
+        previewCaption.Dock = DockStyle.Top;
+        previewCaption.Height = 39;
+        previewCaption.AutoSize = false;
+        previewCaption.Padding = new Padding(5, 13, 0, 0);
+        previewCaption.ForeColor = Theme.Accent;
+        var previewNote = Theme.Label(
+            "Тема и акцент обновляются в макете выше. В приложении они\n" +
+            "применятся только после сохранения изменений.", 8.5F);
+        previewNote.AutoSize = false;
+        previewNote.Dock = DockStyle.Top;
+        previewNote.Height = 57;
+        previewNote.ForeColor = Theme.Muted;
+        previewNote.Padding = new Padding(5, 10, 0, 0);
+        appearancePane.Controls.Add(previewNote);
+        appearancePane.Controls.Add(_themePreview);
+        appearancePane.Controls.Add(previewCaption);
         appearancePane.Controls.Add(appearanceGrid);
         paneHost.Controls.Add(appearancePane);
         _pages.Add("Appearance", appearancePane);
@@ -304,6 +361,9 @@ public sealed class SettingsForm : Form
         _pages["profiles"].Visible = profileVisible;
         _pages["Hotkeys"].Visible = category == "Hotkeys";
         _pages["Appearance"].Visible = category == "Appearance";
+        _settingsFind.Visible = profileVisible;
+        _settingsFindStatus.Visible = profileVisible;
+        _settingsFind.Clear();
 
         foreach (var (name, button) in _navButtons)
             button.Tone = name == category ? ButtonTone.Primary : ButtonTone.Quiet;
@@ -324,7 +384,9 @@ public sealed class SettingsForm : Form
         if (_fieldsHost.Controls.OfType<TableLayoutPanel>().FirstOrDefault() is not { } table)
             return;
 
+        var query = _settingsFind?.Text.Trim() ?? "";
         var current = "Поведение";
+        var count = 0;
         table.SuspendLayout();
         for (var row = 0; row < table.RowCount; row++)
         {
@@ -334,13 +396,30 @@ public sealed class SettingsForm : Form
             else if (caption?.Text.StartsWith("CODE INTELLIGENCE", StringComparison.Ordinal) == true)
                 current = "Code";
 
-            var show = current == _profileSection;
+            var inCategory = current == _profileSection;
+            var show = inCategory &&
+                (query.Length == 0 ||
+                 (caption?.Text.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false));
+            if (show && caption is not null) count++;
             foreach (Control control in table.Controls)
-            {
                 if (table.GetRow(control) == row) control.Visible = show;
-            }
         }
         table.ResumeLayout(true);
+        _fieldsHost.AutoScrollPosition = Point.Empty;
+        if (_settingsFindStatus is not null)
+            _settingsFindStatus.Text = query.Length == 0 ? ""
+                : count == 0 ? "Ничего не найдено" : $"Найдено: {count}";
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.F) && _settingsFind.Visible)
+        {
+            _settingsFind.Focus();
+            _settingsFind.SelectAll();
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     private static StudioButton Button(string title, int width, bool primary = false)
@@ -629,16 +708,16 @@ public sealed class SettingsForm : Form
     {
         var row = table.RowCount;
         table.RowCount = row + 1;
-        var title = Theme.Label(label, 9.1F);
-        title.Margin = new Padding(4, 9, 4, 9);
+        var title = Theme.Label(label, 9.5F);
+        title.Margin = new Padding(6, 13, 10, 11);
         var box = new NumericUpDown
         {
             Minimum = min, Maximum = max, Increment = step,
             DecimalPlaces = decimals, Value = Math.Clamp(value, min, max),
-            Width = 148, Height = 28,
+            Width = 164, Height = 32,
             BackColor = Theme.Surface, ForeColor = Theme.Foreground,
             BorderStyle = BorderStyle.FixedSingle,
-            Margin = new Padding(3, 6, 4, 6)
+            Margin = new Padding(4, 8, 8, 9)
         };
         box.ValueChanged += (_, _) => changed(box.Value);
         table.Controls.Add(title, 0, row);
