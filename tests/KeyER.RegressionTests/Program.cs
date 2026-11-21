@@ -32,8 +32,9 @@ internal static class Program
             await Check("Start waits for hotkey modifiers to be released", ModifierRelease);
             await Check("Start rejects unrelated window", RejectWrongWindow);
             await Check("Settings validation handles malformed values", SettingsValidation);
-            await Check("Studio 0.6: palette and appearance validation", StudioAppearanceValidation);
-            await Check("Studio 0.6: main window/settings construction on STA", StudioUiSmoke);
+            await Check("Studio 0.7: palette and appearance validation", StudioAppearanceValidation);
+            await Check("Studio 0.7: unicode-aware find, wrap and match counts", StudioSearch);
+            await Check("Studio 0.7: main window/settings construction on STA", StudioUiSmoke);
             await Check("IDE 0.4: same-user pipe roundtrip and session invalidation", IdePipeRoundTrip);
             await Check("IDE 0.4: verified mode remains opt-in", IdeSettingsSafety);
             await Check("Human 0.5: style presets and settings migration", HumanStylePresets);
@@ -72,6 +73,15 @@ internal static class Program
                 var codeButton = Descendants(main).OfType<StudioButton>()
                     .FirstOrDefault(b => b.Text.Contains("Редактор кода", StringComparison.Ordinal));
                 codeButton?.PerformClick();
+                // Capture the actual first-run experience before inserting a snippet.
+                main.Refresh();
+                Application.DoEvents();
+                using (var empty = new Bitmap(main.Width, main.Height))
+                {
+                    main.DrawToBitmap(empty, new Rectangle(Point.Empty, empty.Size));
+                    empty.Save(Path.Combine(directory, "KeyER-Studio-Empty.png"));
+                }
+
                 editor.Text =
                     "using System;\n\nnamespace KeyER.Preview;\n\n" +
                     "public static class HumanTyping\n{\n" +
@@ -89,6 +99,19 @@ internal static class Program
                     main.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     bitmap.Save(Path.Combine(directory, "KeyER-Studio-Main.png"));
                 }
+                var searchButton = Descendants(main).OfType<StudioButton>()
+                    .FirstOrDefault(b => b.Text.Contains("Поиск", StringComparison.Ordinal));
+                searchButton?.PerformClick();
+                var findField = Descendants(main).OfType<TextBox>()
+                    .FirstOrDefault(t => t.PlaceholderText.Contains("Поиск по исходнику"));
+                if (findField is not null) findField.Text = "class";
+                Application.DoEvents();
+                using (var searching = new Bitmap(main.Width, main.Height))
+                {
+                    main.DrawToBitmap(searching, new Rectangle(Point.Empty, searching.Size));
+                    searching.Save(Path.Combine(directory, "KeyER-Studio-Find.png"));
+                }
+
 
                 using var settings = new SettingsForm(new AppSettings())
                 {
@@ -783,6 +806,39 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task StudioSearch()
+    {
+        var finder = new SnippetSearch();
+        const string sample = "Alpha alpha ALPHA Привет привет 🙂🙂";
+        finder.Update(sample, "alpha", matchCase: false);
+        Assert(finder.Offsets.Count == 3, "Case-insensitive count.");
+        Assert(finder.Next(0, true, includeCurrent: true) == 0, "Include current match.");
+        Assert(finder.Next(0, true) == 6, "Next match.");
+        Assert(finder.Next(20, true) == 0, "Wrap forward.");
+        Assert(finder.Next(0, false) == 12, "Wrap backward.");
+        Assert(finder.OrdinalAt(6) == 2, "Current match ordinal.");
+
+        finder.Update(sample, "ALPHA", matchCase: true);
+        Assert(finder.Offsets.Count == 1 && finder.Offsets[0] == 12,
+            "Case-sensitive exact match.");
+
+        finder.Update(sample, "ПРИВЕТ", matchCase: false);
+        Assert(finder.Offsets.Count == 2, "Cyrillic case fold.");
+
+        finder.Update(sample, "🙂", matchCase: true);
+        Assert(finder.Offsets.Count == 2 && finder.Length == 2,
+            "Unicode surrogate-pair offsets.");
+
+        finder.Update(sample, "", matchCase: false);
+        Assert(finder.Offsets.Count == 0 && finder.Next(0, true) == -1,
+            "Empty query never selects text.");
+
+        finder.Update(new string('x', 22000), "x", matchCase: true);
+        Assert(finder.Offsets.Count == 10000 && finder.Truncated,
+            "Search must cap matches on huge documents.");
+        return Task.CompletedTask;
+    }
+
     private static Task StudioUiSmoke()
     {
         Exception? issue = null;
@@ -803,12 +859,40 @@ internal static class Program
                     "Custom progress bar.");
                 Assert(Descendants(main).OfType<ComboBox>().Any(),
                     "Profile and language selectors.");
+                Assert(Descendants(main).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Сохранить", StringComparison.Ordinal)),
+                    "Source Save As action exists.");
+                Assert(Descendants(main).OfType<Label>().Any(l =>
+                    l.Text.Contains("ПЕРЕД ЗАПУСКОМ", StringComparison.Ordinal)),
+                    "Readiness guidance visible in sidebar.");
+                Assert(Descendants(main).OfType<TextBox>().Any(t =>
+                    t.PlaceholderText.Contains("Поиск", StringComparison.Ordinal)),
+                    "Improved Find bar present.");
 
                 using var settings = new SettingsForm(new AppSettings());
                 Assert(Descendants(settings).OfType<StudioButton>().Count() >= 6,
                     "Settings side navigation and save controls.");
                 Assert(Descendants(settings).OfType<NumericUpDown>().Any(),
                     "Editable profile parameters must remain available.");
+                Assert(Descendants(settings).OfType<StudioThemePreview>().Count() == 1,
+                    "Live theme preview must exist.");
+                Assert(Descendants(settings).OfType<TextBox>().Any(t =>
+                    t.PlaceholderText.Contains("Поиск параметра", StringComparison.Ordinal)),
+                    "Settings search must be discoverable.");
+
+                using (var theme = new StudioThemePreview
+                {
+                    Size = new Size(400, 196), PreviewAppearance = AppearanceMode.Dark
+                })
+                using (var first = new Bitmap(400, 196))
+                using (var second = new Bitmap(400, 196))
+                {
+                    theme.DrawToBitmap(first, new Rectangle(0, 0, 400, 196));
+                    theme.PreviewAppearance = AppearanceMode.Light;
+                    theme.DrawToBitmap(second, new Rectangle(0, 0, 400, 196));
+                    Assert(first.GetPixel(40, 45) != second.GetPixel(40, 45),
+                        "Preview must change colors without saving settings.");
+                }
 
                 editor.Text = "using System;\nclass Example { int Count = 7; }";
                 Assert(editor.Text.Contains("Example"), "Rich editor should accept input.");
