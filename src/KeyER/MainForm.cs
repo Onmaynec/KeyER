@@ -691,6 +691,7 @@ public sealed class MainForm : Form
                     case "accent": label.ForeColor = Theme.Accent; break;
                     case "muted": label.ForeColor = Theme.Muted; break;
                     case "success": label.ForeColor = Theme.Success; break;
+                    case "danger": label.ForeColor = Theme.Danger; break;
                     case "logo": label.ForeColor = Color.White; label.BackColor = Theme.AccentFill; break;
                     default: label.ForeColor = Theme.Foreground; break;
                 }
@@ -723,19 +724,51 @@ public sealed class MainForm : Form
         catch (InvalidOperationException) { /* Window is closing. */ }
     }
 
-    private void SetStatus(string value) => _status.Text = value;
+    private void SetStatus(string value)
+    {
+        _status.Text = "●   " + value;
+        var negative = value.Contains("ошиб", StringComparison.OrdinalIgnoreCase) ||
+                       value.Contains("не удалось", StringComparison.OrdinalIgnoreCase) ||
+                       value.Contains("отклон", StringComparison.OrdinalIgnoreCase);
+        _status.Tag = negative ? "danger" : "success";
+        _status.ForeColor = negative ? Theme.Danger : Theme.Success;
+    }
 
     private void UpdateStats()
     {
-        _stats.Text = $"{_editor.TextLength:N0} символов · {_editor.Lines.Length:N0} строк";
-        var profile = _settings.GetProfile();
+        if (_editor is null || _wordCount is null) return;
+        var content = _editor.Text;
+        var words = 0;
+        var inside = false;
+        foreach (var c in content)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                if (!inside) words++;
+                inside = true;
+            }
+            else inside = false;
+        }
+        _stats.Text = $"{_editor.TextLength:N0} символов";
+        _wordCount.Text = $"{words:N0} слов";
         _languagePicker.Visible = _settings.Mode == TypingMode.Code;
         _language.Text = _settings.Mode == TypingMode.Text
-            ? "Text · " + (profile.TextEnter == TextEnterMode.ShiftEnter ? "Shift+Enter" : "Enter")
-                + " · " + (profile.TextTab == TextTabMode.Spaces ? $"Tab = {profile.TabSpaces} пробелов" : "Tab")
-            : "Code · " + CodeAnalyzer.Name(CodeAnalyzer.Detect(_settings.SourceFileName,
-                _editor.Text, Enum.TryParse<CodeAnalyzer.Language>(_settings.CodeLanguage,
+            ? "TEXT  /  " + (_settings.GetProfile().TextEnter == TextEnterMode.ShiftEnter
+                ? "Shift+Enter" : "Enter")
+            : "CODE  /  " + CodeAnalyzer.Name(CodeAnalyzer.Detect(_settings.SourceFileName,
+                content, Enum.TryParse<CodeAnalyzer.Language>(_settings.CodeLanguage,
                     out var selected) ? selected : CodeAnalyzer.Language.Auto));
+        _pageTitle.Text = _settings.Mode == TypingMode.Text ? "Текстовый редактор" : "Рабочее поле кода";
+        _pageSubtitle.Text = _settings.Mode == TypingMode.Text
+            ? "Естественный набор текста с вашим стилем поведения"
+            : "Исходный код, сохранение структуры и интеграция с IDE";
+        _syntaxPainter.IsCode = _settings.Mode == TypingMode.Code;
+        _syntaxPainter.FileName = _settings.SourceFileName;
+        _syntaxPainter.Language = _settings.CodeLanguage;
+        _syntaxPainter.Enabled = _settings.SyntaxHighlighting;
+        _syntaxPainter.Schedule();
+        UpdateVisualButtons();
+        UpdateCaret();
     }
 
     private void RefreshProfiles()
@@ -758,16 +791,17 @@ public sealed class MainForm : Form
         _start.Enabled = !running && !_countingDown && !_ideBusy;
         _pause.Enabled = running;
         _stop.Enabled = running || _countingDown || _ideBusy;
-        _pause.Text = _engine.IsPaused ? "▶  Продолжить" : "Ⅱ  Пауза";
+        _pause.Text = _engine.IsPaused ? "▶    Продолжить" : "Ⅱ    Пауза";
         _mode.Enabled = !running && !_ideBusy;
         _profiles.Enabled = !running && !_ideBusy;
         _languagePicker.Enabled = !running && !_ideBusy;
         _editor.ReadOnly = running || _ideBusy;
+        _findField.Enabled = !running && !_ideBusy;
     }
 
     private void OpenFile()
     {
-        if (_engine.IsRunning) { SetStatus("Остановите набор перед импортом."); return; }
+        if (_engine.IsRunning || _countingDown || _ideBusy) { SetStatus("Остановите набор перед импортом."); return; }
         using var dialog = new OpenFileDialog
         {
             Title = "Открыть текст или код",
@@ -780,7 +814,9 @@ public sealed class MainForm : Form
             if (size > 2_000_000 &&
                 MessageBox.Show(this, "Файл больше 2 МБ. Открыть? Набор может быть очень долгим.",
                     "KeyER", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            _editor.Text = File.ReadAllText(dialog.FileName);
+            _importing = true;
+            try { _editor.Text = File.ReadAllText(dialog.FileName); }
+            finally { _importing = false; }
             _settings.SourceFileName = Path.GetFileName(dialog.FileName);
             UpdateStats();
             SetStatus($"Загружен файл: {_settings.SourceFileName}");
@@ -811,6 +847,11 @@ public sealed class MainForm : Form
             PersistSettings();
         }
         RefreshProfiles();
+        TopMost = _settings.AlwaysOnTop;
+        ApplyCompactLayout();
+        _gutter.Visible = _settings.ShowLineNumbers;
+        _editor.Font = new Font("Cascadia Code", _settings.EditorFontSize);
+        ApplyAppearance();
         UpdateStats();
     }
 
@@ -858,6 +899,7 @@ public sealed class MainForm : Form
         _ideBusy = true;
         _idePreflight = new CancellationTokenSource();
         _progress.Value = 0;
+        _progressPercent.Text = "0%";
         UpdateButtons();
         var snapshot = _editor.Text;
         var expected = snapshot.Replace("\r\n", "\n").Replace('\r', '\n');
