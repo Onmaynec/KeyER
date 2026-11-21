@@ -70,6 +70,7 @@ public sealed partial class MainForm : Form
     private bool _registering;
     private bool _countingDown;
     private bool _importing;
+    private bool _editingBlank;
     private CancellationTokenSource? _countdownCts;
 
     public MainForm()
@@ -464,7 +465,8 @@ public sealed partial class MainForm : Form
         _editor.TextChanged += (_, _) =>
         {
             if (!_importing) _modified = true;
-            _emptyOverlay!.Visible = _editor.TextLength == 0;
+            if (_editor.TextLength > 0) _editingBlank = true;
+            RefreshEmptyState();
             _statsTimer.Stop();
             _statsTimer.Start();
             _syntaxPainter!.Schedule();
@@ -501,11 +503,11 @@ public sealed partial class MainForm : Form
             "пока вы не очистите редактор вручную.", 10F, true);
         _emptyHint.ForeColor = Theme.Muted; _emptyHint.Tag = "muted";
         _emptyHint.Left = 87; _emptyHint.Top = 48;
-        _emptyHint.Click += (_, _) => _editor.Focus();
+        _emptyHint.Click += (_, _) => BeginManualEntry();
 
         _emptyActions = new Panel
         {
-            Width = 310, Height = 48, Left = 84, Top = 143,
+            Width = 310, Height = 96, Left = 84, Top = 143,
             BackColor = Theme.Input, Tag = "input"
         };
         var emptyPaste = new StudioButton
@@ -520,13 +522,19 @@ public sealed partial class MainForm : Form
         };
         emptyPaste.Click += (_, _) => PasteIntoEditor();
         emptyOpen.Click += (_, _) => OpenFile();
-        _emptyActions.Controls.AddRange([emptyPaste, emptyOpen]);
+        var emptyManual = new StudioButton
+        {
+            Text = "Или начать печатать вручную", Width = 300,
+            Height = 37, Left = 1, Top = 53, Tone = ButtonTone.Quiet
+        };
+        emptyManual.Click += (_, _) => BeginManualEntry();
+        _emptyActions.Controls.AddRange([emptyPaste, emptyOpen, emptyManual]);
         _emptyOverlay = new Panel
         {
             Dock = DockStyle.Fill, BackColor = Theme.Input, Tag = "input",
             AccessibleName = "Подготовка исходного текста"
         };
-        _emptyOverlay.Click += (_, _) => _editor.Focus();
+        _emptyOverlay.Click += (_, _) => BeginManualEntry();
         _emptyOverlay.Controls.Add(_emptyHint);
         _emptyOverlay.Controls.Add(_emptyActions);
         _emptyOverlay.Resize += (_, _) =>
@@ -541,6 +549,8 @@ public sealed partial class MainForm : Form
         _editorSurface.Controls.Add(_gutter);
         _editorSurface.Controls.Add(_emptyOverlay);
         _emptyOverlay.BringToFront();
+        _editor.Visible = false; // The native RichEdit window cannot obscure onboarding.
+        _gutter.Visible = false;
         _syntaxPainter = new SyntaxPainter(_editor)
         {
             IsCode = _settings.Mode == TypingMode.Code,
@@ -727,7 +737,10 @@ public sealed partial class MainForm : Form
             RegisterHotkeys(showWarnings: true);
             _ideBridge.Start();
             _syntaxPainter.Schedule();
-            BeginInvoke(new Action(() => { if (!_editor.IsDisposed) _editor.Focus(); }));
+            BeginInvoke(new Action(() =>
+            {
+                if (!_editor.IsDisposed && _editor.Visible) _editor.Focus();
+            }));
         };
         ResizeEnd += (_, _) =>
         {
@@ -759,6 +772,28 @@ public sealed partial class MainForm : Form
             _ideBridge.Dispose();
             UnregisterHotkeys();
         };
+    }
+
+    private void BeginManualEntry()
+    {
+        _editingBlank = true;
+        RefreshEmptyState();
+        _editor.Focus();
+    }
+
+    private void RefreshEmptyState()
+    {
+        if (_emptyOverlay is null || _gutter is null || _editor is null) return;
+        var welcome = _editor.TextLength == 0 && !_editingBlank;
+        _emptyOverlay.Visible = welcome;
+        _editor.Visible = !welcome;
+        _gutter.Visible = !welcome && _settings.ShowLineNumbers;
+        if (welcome) _emptyOverlay.BringToFront();
+        else
+        {
+            _editor.BringToFront();
+            _gutter.BringToFront();
+        }
     }
 
     private void SwitchMode(TypingMode mode)
@@ -1085,7 +1120,7 @@ public sealed partial class MainForm : Form
         RefreshProfiles();
         TopMost = _settings.AlwaysOnTop;
         ApplyCompactLayout();
-        _gutter.Visible = _settings.ShowLineNumbers;
+        RefreshEmptyState();
         _editor.Font = new Font("Cascadia Code", _settings.EditorFontSize);
         ApplyAppearance();
         UpdateStats();
