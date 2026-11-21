@@ -549,6 +549,7 @@ public sealed class MainForm : Form
 
         Shown += (_, _) =>
         {
+            if (Environment.GetEnvironmentVariable("KEYER_UI_PREVIEW") == "1") return;
             RegisterHotkeys(showWarnings: true);
             _ideBridge.Start();
             _syntaxPainter.Schedule();
