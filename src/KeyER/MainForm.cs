@@ -316,7 +316,7 @@ public sealed class MainForm : Form
 
         var commandRow = new FlowLayoutPanel
         {
-            Dock = DockStyle.Right, Width = 411, Height = 45,
+            Dock = DockStyle.Right, Width = 492, Height = 45,
             FlowDirection = FlowDirection.LeftToRight, WrapContents = false,
             Padding = Padding.Empty, BackColor = Theme.Surface, Tag = "surface"
         };
@@ -324,9 +324,14 @@ public sealed class MainForm : Form
         var openButton = new StudioButton { Text = "Файл", Width = 68, Height = 36 };
         var clearButton = new StudioButton { Text = "Очистить", Width = 85, Height = 36, Tone = ButtonTone.Quiet };
         var copyButton = new StudioButton { Text = "Копия", Width = 75, Height = 36, Tone = ButtonTone.Quiet };
+        _saveSource = new StudioButton
+        {
+            Text = "Сохранить", Width = 91, Height = 36, Tone = ButtonTone.Soft
+        };
+        _saveSource.Click += (_, _) => SaveSourceAs();
         pasteButton.Click += (_, _) => PasteIntoEditor();
         openButton.Click += (_, _) => OpenFile();
-        clearButton.Click += (_, _) => { if (!_editor!.ReadOnly) _editor.Clear(); };
+        clearButton.Click += (_, _) => ClearSource();
         copyButton.Click += (_, _) =>
         {
             try
@@ -336,7 +341,7 @@ public sealed class MainForm : Form
             }
             catch (Exception ex) { SetStatus("Копирование не удалось: " + ex.Message); }
         };
-        commandRow.Controls.AddRange([pasteButton, openButton, copyButton, clearButton]);
+        commandRow.Controls.AddRange([pasteButton, openButton, _saveSource, copyButton, clearButton]);
         _languagePicker.Left = 159;
         _languagePicker.Top = 7;
         editorToolbar.Controls.Add(_sourceBadge);
@@ -344,10 +349,14 @@ public sealed class MainForm : Form
         editorToolbar.Controls.Add(commandRow);
         editorToolbar.Resize += (_, _) =>
         {
-            var tight = editorToolbar.ClientSize.Width < 680;
+            var tight = editorToolbar.ClientSize.Width < 820;
+            var narrow = editorToolbar.ClientSize.Width < 590;
             copyButton.Visible = !tight;
             clearButton.Visible = !tight;
-            commandRow.Width = tight ? 168 : 411;
+            commandRow.Width = tight ? 267 : 492;
+            _sourceBadge.Visible = !narrow;
+            _languagePicker.Left = narrow ? 12 : 159;
+            _languagePicker.Width = narrow ? 104 : 124;
         };
 
         var separatorTop = new Panel { Dock = DockStyle.Top, Height = 1, Tag = "border", BackColor = Theme.Border };
@@ -444,13 +453,15 @@ public sealed class MainForm : Form
         };
         _editor.TextChanged += (_, _) =>
         {
-            if (!_importing) _settings.SourceFileName = "";
+            if (!_importing) _modified = true;
             _emptyHint!.Visible = _editor.TextLength == 0;
+            _emptyActions!.Visible = _editor.TextLength == 0;
             _statsTimer.Stop();
             _statsTimer.Start();
             _syntaxPainter!.Schedule();
             _gutter!.Invalidate();
             if (_searchPanel.Visible) FindInEditor(true, quiet: true);
+            UpdateStats();
             UpdateButtons();
         };
         _editor.SelectionChanged += (_, _) => { UpdateCaret(); _gutter!.Invalidate(); };
@@ -458,20 +469,61 @@ public sealed class MainForm : Form
         _editor.MouseWheel += (_, _) => _gutter!.Invalidate();
         _editor.KeyDown += (_, e) =>
         {
+            if (e.Control && e.Shift && e.KeyCode == Keys.S)
+            { SaveSourceAs(); e.SuppressKeyPress = true; }
             if (e.Control && e.KeyCode == Keys.F)
             { ToggleFind(show: true); e.SuppressKeyPress = true; }
             if (e.KeyCode == Keys.Escape && _searchPanel.Visible)
             { ToggleFind(); e.SuppressKeyPress = true; }
         };
+        AllowDrop = true;
+        _editor.AllowDrop = true;
+        _editorSurface.AllowDrop = true;
+        DragEnter += FileDragEnter;
+        DragDrop += FileDropped;
+        _editor.DragEnter += FileDragEnter;
+        _editor.DragDrop += FileDropped;
+        _editorSurface.DragEnter += FileDragEnter;
+        _editorSurface.DragDrop += FileDropped;
         _gutter = new EditorGutter { Editor = _editor, Visible = _settings.ShowLineNumbers };
-        _emptyHint = Theme.Label("Ваш текст начинается здесь...\n\nВставьте материал, откройте файл или начните печатать.", 9.5F);
+        _emptyHint = Theme.Label(
+            "НАЧНИТЕ С ИСХОДНИКА\n\n" +
+            "Вставьте текст или откройте файл. Он останется здесь,\n" +
+            "пока вы не очистите редактор вручную.", 10F, true);
         _emptyHint.ForeColor = Theme.Muted; _emptyHint.Tag = "muted";
-        _emptyHint.Left = 84; _emptyHint.Top = 36;
+        _emptyHint.Left = 87; _emptyHint.Top = 48;
         _emptyHint.Click += (_, _) => _editor.Focus();
+
+        _emptyActions = new Panel
+        {
+            Width = 310, Height = 48, Left = 84, Top = 143,
+            BackColor = Theme.Input, Tag = "input"
+        };
+        var emptyPaste = new StudioButton
+        {
+            Text = "Вставить текст", Width = 148, Height = 42,
+            Left = 0, Top = 2, Tone = ButtonTone.Primary
+        };
+        var emptyOpen = new StudioButton
+        {
+            Text = "Открыть файл", Width = 145, Height = 42,
+            Left = 157, Top = 2, Tone = ButtonTone.Outline
+        };
+        emptyPaste.Click += (_, _) => PasteIntoEditor();
+        emptyOpen.Click += (_, _) => OpenFile();
+        _emptyActions.Controls.AddRange([emptyPaste, emptyOpen]);
         _editorSurface.Controls.Add(_editor);
         _editorSurface.Controls.Add(_gutter);
         _editorSurface.Controls.Add(_emptyHint);
+        _editorSurface.Controls.Add(_emptyActions);
         _emptyHint.BringToFront();
+        _emptyActions.BringToFront();
+        _editorSurface.Resize += (_, _) =>
+        {
+            var x = Math.Max(58, Math.Min(87, _editorSurface.ClientSize.Width / 8));
+            _emptyHint.Left = x;
+            _emptyActions.Left = x - 3;
+        };
         _syntaxPainter = new SyntaxPainter(_editor)
         {
             IsCode = _settings.Mode == TypingMode.Code,
