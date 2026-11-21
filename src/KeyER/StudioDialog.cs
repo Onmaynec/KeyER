@@ -20,7 +20,7 @@ internal sealed class StudioDialog : Form
         MinimizeBox = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(495, confirmation ? 230 : 342);
+        ClientSize = new Size(495, confirmation ? 260 : 440);
         MinimumSize = Size;
 
         var card = new StudioCard { Dock = DockStyle.Fill, Padding = new Padding(24) };
