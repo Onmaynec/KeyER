@@ -38,6 +38,8 @@ public sealed partial class MainForm
         {
             Title = "Сохранить исходник как...",
             Filter = "Текстовый файл (*.txt)|*.txt|Исходный файл (*.cs;*.py;*.js;*.ts;*.cpp)|*.cs;*.py;*.js;*.ts;*.cpp|Все файлы (*.*)|*.*",
+            InitialDirectory = _openedFilePath is null
+                ? "" : Path.GetDirectoryName(_openedFilePath) ?? "",
             FileName = string.IsNullOrWhiteSpace(_settings.SourceFileName)
                 ? (_settings.Mode == TypingMode.Code ? "snippet.cs" : "text.txt")
                 : _settings.SourceFileName,
@@ -149,7 +151,7 @@ public sealed partial class MainForm
     {
         if (_sourceBadge is null || _profileDetails is null || _readyStep is null) return;
 
-        var name = string.IsNullOrWhiteSpace(_settings.SourceFileName)
+        var name = _editor.TextLength == 0 || string.IsNullOrWhiteSpace(_settings.SourceFileName)
             ? "НОВЫЙ ФРАГМЕНТ" : _settings.SourceFileName;
         _sourceBadge.Text = (_modified ? "●  " : "◉  ") + name;
         _sourceBadge.ForeColor = _modified ? Theme.Warning : Theme.Accent;
