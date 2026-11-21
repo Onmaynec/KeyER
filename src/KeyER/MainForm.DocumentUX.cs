@@ -23,7 +23,9 @@ public sealed partial class MainForm
             "Вы можете сначала сохранить исходник в файл."))
             return;
 
+        _editingBlank = false;
         _editor.Clear();
+        RefreshEmptyState();
         _openedFilePath = null;
         _settings.SourceFileName = "";
         _modified = false;
@@ -96,6 +98,8 @@ public sealed partial class MainForm
             _importing = true;
             try { _editor.Text = text; }
             finally { _importing = false; }
+            _editingBlank = text.Length > 0;
+            RefreshEmptyState();
 
             _openedFilePath = path;
             _settings.SourceFileName = Path.GetFileName(path);
