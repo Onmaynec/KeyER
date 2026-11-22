@@ -70,6 +70,8 @@ public sealed partial class TypingEngine
     private bool _paused;
     private bool _modifiersReleased;
     private volatile TypingOutcome _outcome = TypingOutcome.Idle;
+    private int _processedCharacters;
+    private int _totalCharacters;
 
     public event Action<int, int>? ProgressChanged;
     public event Action<string>? StatusChanged;
@@ -88,6 +90,15 @@ public sealed partial class TypingEngine
     public bool IsRunning { get { lock (_gate) return _cts is not null; } }
     public bool IsPaused { get { lock (_gate) return _paused; } }
     public TypingOutcome LastOutcome => _outcome;
+    public int LastProcessedCharacters => Volatile.Read(ref _processedCharacters);
+    public int LastTotalCharacters => Volatile.Read(ref _totalCharacters);
+
+    private void ReportProgress(int completed, int total)
+    {
+        Volatile.Write(ref _processedCharacters, Math.Clamp(completed, 0, Math.Max(0, total)));
+        Volatile.Write(ref _totalCharacters, Math.Max(0, total));
+        ProgressChanged?.Invoke(completed, total);
+    }
 
     public async Task StartAsync(string content, TypingMode mode, TypingProfile sourceProfile,
         IntPtr target, string? sourceFileName = null, string? selectedLanguage = null)
@@ -108,6 +119,8 @@ public sealed partial class TypingEngine
             _paused = false;
             _modifiersReleased = false;
             _outcome = TypingOutcome.Running;
+            Volatile.Write(ref _processedCharacters, 0);
+            Volatile.Write(ref _totalCharacters, content.Replace("\r\n", "\n").Replace('\r', '\n').Length);
         }
 
         try
