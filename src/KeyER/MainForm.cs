@@ -121,7 +121,7 @@ public sealed partial class MainForm : Form
         };
         var wordmark = Theme.Label("KeyER", 20F, true);
         wordmark.Left = 55; wordmark.Top = 1;
-        var version = Theme.Label("STUDIO  /  v0.7", 8F, true);
+        var version = Theme.Label("STUDIO  /  v0.8", 8F, true);
         version.Left = 57; version.Top = 35;
         version.ForeColor = Theme.Accent; version.Tag = "accent";
         var brandCaption = Theme.Label("YOUR TYPING WORKSPACE", 8F, true);
@@ -730,7 +730,7 @@ public sealed partial class MainForm : Form
             "Через три секунды проверить выбранное окно, его состояние и совместимость по правам доступа.");
         _tips.SetToolTip(_sessionReportButton,
             "Итог последней попытки без текста, имён файлов и заголовка целевого окна");
-        _tips.SetToolTip(_saveSource, "Сохранить в отдельный файл (Ctrl+Shift+S)");
+        _tips.SetToolTip(_saveSource, "Сохранить в отдельный файл (Ctrl+S или Ctrl+Shift+S)");
         _tips.SetToolTip(_profiles, "Выберите скорость, характер ошибок и стиль набора");
         ApplyCompactLayout();
         UpdateVisualButtons();
