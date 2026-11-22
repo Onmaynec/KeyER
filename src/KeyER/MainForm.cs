@@ -38,6 +38,8 @@ public sealed partial class MainForm : Form
     private readonly StudioButton _pause;
     private readonly StudioButton _stop;
     private readonly StudioButton _diagnostics;
+    private readonly StudioButton _sessionReportButton;
+    private TypingSessionReport? _lastSessionReport;
     private bool _checkingTarget;
     private readonly StudioButton _textModeButton;
     private readonly StudioButton _codeModeButton;
@@ -643,8 +645,21 @@ public sealed partial class MainForm : Form
         _progressPercent.ForeColor = Theme.Muted; _progressPercent.Tag = "muted";
         _progressPercent.Dock = DockStyle.Right; _progressPercent.AutoSize = false;
         _progressPercent.TextAlign = ContentAlignment.MiddleRight; _progressPercent.Width = 72;
+        _sessionReportButton = new StudioButton
+        {
+            Text = "Отчёт", Width = 87, Height = 27,
+            Dock = DockStyle.Right, Tone = ButtonTone.Quiet, Enabled = false,
+            CornerRadius = 8, Margin = Padding.Empty
+        };
+        _sessionReportButton.Click += (_, _) =>
+        {
+            if (_lastSessionReport is null) return;
+            using var report = new SessionReportForm(_lastSessionReport);
+            report.ShowDialog(this);
+        };
         statusRow.Controls.Add(_status);
         statusRow.Controls.Add(_progressPercent);
+        statusRow.Controls.Add(_sessionReportButton);
         bottomLayout.Controls.Add(statusRow, 0, 0);
 
         _progress = new StudioProgress { Dock = DockStyle.Fill, Value = 0 };
@@ -713,6 +728,8 @@ public sealed partial class MainForm : Form
         _tips.SetToolTip(_stop, "Остановить набор без дальнейшего ввода");
         _tips.SetToolTip(_diagnostics,
             "Через три секунды проверить выбранное окно, его состояние и совместимость по правам доступа.");
+        _tips.SetToolTip(_sessionReportButton,
+            "Итог последней попытки без текста, имён файлов и заголовка целевого окна");
         _tips.SetToolTip(_saveSource, "Сохранить в отдельный файл (Ctrl+Shift+S)");
         _tips.SetToolTip(_profiles, "Выберите скорость, характер ошибок и стиль набора");
         ApplyCompactLayout();
@@ -1091,6 +1108,7 @@ public sealed partial class MainForm : Form
         var running = _engine.IsRunning;
         _start.Enabled = !running && !_countingDown && !_ideBusy && !_checkingTarget && _editor.TextLength > 0;
         _diagnostics.Enabled = !running && !_countingDown && !_ideBusy && !_checkingTarget;
+        _sessionReportButton.Enabled = _lastSessionReport is not null && !running && !_countingDown && !_ideBusy;
         _pause.Enabled = running;
         _stop.Enabled = running || _countingDown || _ideBusy || _checkingTarget;
         _pause.Text = _engine.IsPaused ? "▶    Продолжить" : "Ⅱ    Пауза";
@@ -1287,10 +1305,18 @@ public sealed partial class MainForm : Form
                 }
             }
 
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var activeTask = _engine.StartAsync(snapshot, _settings.Mode, profile, target,
                 _settings.SourceFileName, _settings.CodeLanguage);
             UpdateButtons();
             await activeTask;
+            stopwatch.Stop();
+            _lastSessionReport = TypingSessionReport.Create(
+                _engine.LastOutcome, _engine.LastProcessedCharacters,
+                _engine.LastTotalCharacters, stopwatch.Elapsed, readiness.ProcessLabel);
+            _tips.SetToolTip(_sessionReportButton, _lastSessionReport.Title +
+                ". Нажмите для подробностей и безопасного восстановления.");
+            UpdateButtons();
 
             _visualStudioMonitor.Stop();
             if (_vsCodeSessionId is not null)
