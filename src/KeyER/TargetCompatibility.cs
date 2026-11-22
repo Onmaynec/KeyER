@@ -47,7 +47,8 @@ internal static class TargetCompatibility
     /// <summary>Pure decision core, testable without foreground windows.</summary>
     public static TargetHealthReport Evaluate(bool hasWindow, bool ownWindow,
         bool available, bool foreground, bool minimized, bool hung,
-        bool? targetElevated, bool? currentElevated, string? processLabel)
+        bool? targetElevated, bool? currentElevated, string? processLabel,
+        bool processAvailable = true)
     {
         var safeName = SafeProcessName(processLabel);
         TargetHealthReport Result(TargetHealthCode code, string summary, string guidance) =>
@@ -62,6 +63,10 @@ internal static class TargetCompatibility
         if (!available)
             return Result(TargetHealthCode.WindowUnavailable, "Окно больше недоступно.",
                 "Вернитесь в целевое приложение и повторите проверку.");
+        if (!processAvailable)
+            return Result(TargetHealthCode.ProcessUnavailable, "Не удалось определить процесс окна.",
+                "Закройте окно, откройте редактор заново и повторите проверку. " +
+                "Без идентификатора процесса безопасный набор не запускается.");
         if (!foreground)
             return Result(TargetHealthCode.NotForeground, "Целевое окно потеряло фокус.",
                 "Вернитесь в то же окно и повторите запуск. Набор в другое окно не продолжается.");
@@ -102,7 +107,7 @@ internal static class TargetCompatibility
         var elevatedTarget = targetId == 0 ? null : ReadElevation(targetId);
         var elevatedCurrent = ReadElevation((uint)Environment.ProcessId);
         return Evaluate(true, own, available, foreground, minimized, hung,
-            elevatedTarget, elevatedCurrent, process);
+            elevatedTarget, elevatedCurrent, process, targetId != 0);
     }
 
     private static bool? ReadElevation(uint processId)
