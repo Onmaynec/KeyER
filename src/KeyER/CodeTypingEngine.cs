@@ -26,7 +26,7 @@ public sealed partial class TypingEngine
             {
                 await KeyAsync(Keys.Enter, target, token);
                 done++;
-                ProgressChanged?.Invoke(done, source.Length);
+                ReportProgress(done, source.Length);
 
                 // The editor controls auto-indent. No automatic "smart" deletion
                 // is possible without reading its current state (future v0.4).
@@ -96,7 +96,7 @@ public sealed partial class TypingEngine
                     await PauseAsync(Math.Clamp((int)Math.Round(smoothDelay), 12, 3000), token);
 
                     if (done % 4 == 0 || index == part.Text.Length)
-                        ProgressChanged?.Invoke(done, source.Length);
+                        ReportProgress(done, source.Length);
                 }
 
                 // Reversible, meaningful caret action on identifiers: select the
@@ -145,7 +145,7 @@ public sealed partial class TypingEngine
             }
         }
 
-        ProgressChanged?.Invoke(source.Length, source.Length);
+        ReportProgress(source.Length, source.Length);
     }
 
     private Task LinePauseAsync(CodeAnalyzer.Line line, TypingProfile profile,
