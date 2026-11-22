@@ -1,11 +1,17 @@
 namespace KeyER;
 
-public enum TypingOutcome { Idle, Running, Completed, Cancelled, FocusLost, Failed }
+public enum TypingOutcome { Idle, Running, Completed, Cancelled, FocusLost, Failed, Interrupted }
 
 public sealed class TargetWindowChangedException : Exception
 {
     public TargetWindowChangedException()
         : base("Активное окно изменилось. Набор остановлен, чтобы не вводить текст не туда.") { }
+}
+
+public sealed class UnexpectedModifierException : Exception
+{
+    public UnexpectedModifierException()
+        : base("Во время набора зажаты Ctrl, Alt, Shift или Win. Ввод остановлен, чтобы избежать случайных команд.") { }
 }
 
 internal interface ITypingDevice
@@ -19,9 +25,26 @@ internal interface ITypingDevice
 
 internal sealed class WindowsTypingDevice : ITypingDevice
 {
-    public bool IsTargetActive(IntPtr target) =>
-        target != IntPtr.Zero && Native.IsWindow(target) &&
-        !Native.IsOwnWindow(target) && Native.GetForegroundWindow() == target;
+    private int _boundProcessId;
+
+    internal bool BindTarget(IntPtr target)
+    {
+        var id = Native.GetWindowProcessId(target);
+        if (id == 0) return false;
+        Volatile.Write(ref _boundProcessId, checked((int)id));
+        return true;
+    }
+
+    internal void UnbindTarget() => Volatile.Write(ref _boundProcessId, 0);
+
+    public bool IsTargetActive(IntPtr target)
+    {
+        if (target == IntPtr.Zero || !Native.IsWindow(target) ||
+            Native.IsOwnWindow(target) || Native.GetForegroundWindow() != target)
+            return false;
+        var bound = Volatile.Read(ref _boundProcessId);
+        return bound == 0 || Native.GetWindowProcessId(target) == (uint)bound;
+    }
 
     public bool AreModifiersHeld =>
         Native.IsPressed(Keys.ControlKey) || Native.IsPressed(Keys.Menu) ||
@@ -45,6 +68,7 @@ public sealed partial class TypingEngine
     private readonly Func<Random> _randomFactory;
     private CancellationTokenSource? _cts;
     private bool _paused;
+    private bool _modifiersReleased;
     private volatile TypingOutcome _outcome = TypingOutcome.Idle;
 
     public event Action<int, int>? ProgressChanged;
@@ -82,11 +106,15 @@ public sealed partial class TypingEngine
             local = new CancellationTokenSource();
             _cts = local;
             _paused = false;
+            _modifiersReleased = false;
             _outcome = TypingOutcome.Running;
         }
 
         try
         {
+            if (_device is WindowsTypingDevice windowsDevice &&
+                !windowsDevice.BindTarget(target))
+                throw new TargetWindowChangedException();
             StatusChanged?.Invoke("Набор текста...");
             await Task.Run(() => RunAsync(content, mode, profile, target, sourceFileName,
                 selectedLanguage, local.Token));
@@ -103,6 +131,11 @@ public sealed partial class TypingEngine
             _outcome = TypingOutcome.FocusLost;
             StatusChanged?.Invoke(ex.Message);
         }
+        catch (UnexpectedModifierException ex)
+        {
+            _outcome = TypingOutcome.Interrupted;
+            StatusChanged?.Invoke(ex.Message);
+        }
         catch (Exception ex)
         {
             _outcome = TypingOutcome.Failed;
@@ -111,12 +144,14 @@ public sealed partial class TypingEngine
         }
         finally
         {
+            if (_device is WindowsTypingDevice windowsDevice) windowsDevice.UnbindTarget();
             lock (_gate)
             {
                 if (ReferenceEquals(_cts, local))
                 {
                     _cts = null;
                     _paused = false;
+                    _modifiersReleased = false;
                 }
             }
             local.Dispose();
@@ -289,6 +324,8 @@ public sealed partial class TypingEngine
         }
         token.ThrowIfCancellationRequested();
         if (!_device.IsTargetActive(target)) throw new TargetWindowChangedException();
+        if (_modifiersReleased && _device.AreModifiersHeld)
+            throw new UnexpectedModifierException();
     }
 
     private async Task WaitForHotkeyReleaseAsync(IntPtr target, CancellationToken token)
@@ -302,6 +339,9 @@ public sealed partial class TypingEngine
                     "Отпустите Ctrl, Alt, Shift и Win перед началом ввода.");
             await Task.Delay(20, token);
         }
+        // The initial start hotkey has now been released. Later physical
+        // modifiers could transform navigation/repair into unintended shortcuts.
+        _modifiersReleased = true;
     }
 
     private Task PauseAsync(int milliseconds, CancellationToken token) =>
