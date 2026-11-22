@@ -196,7 +196,7 @@ public sealed partial class TypingEngine
             }
 
             if (index % 4 == 0 || c is '\n' or '\t' || index >= source.Length)
-                ProgressChanged?.Invoke(index, source.Length);
+                ReportProgress(index, source.Length);
 
             await TextPauseAsync(source, index, c, p, rng, token);
 
@@ -223,7 +223,7 @@ public sealed partial class TypingEngine
         }
 
         if (pending is not null) await FixAsync(pending, p, target, rng, token);
-        ProgressChanged?.Invoke(source.Length, source.Length);
+        ReportProgress(source.Length, source.Length);
     }
 
     private async Task FixAsync(DeferredError error, TypingProfile p, IntPtr target,
