@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace KeyER;
@@ -35,10 +34,14 @@ internal static class TargetCompatibility
     private static extern bool GetTokenInformation(IntPtr tokenHandle, int infoClass,
         out int information, int informationLength, out int returnLength);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, uint processId);
+
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr handle);
 
     private const uint TokenQuery = 0x0008;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
     private const int TokenElevation = 20;
 
     /// <summary>Pure decision core, testable without foreground windows.</summary>
@@ -104,10 +107,13 @@ internal static class TargetCompatibility
 
     private static bool? ReadElevation(uint processId)
     {
+        // Open only the minimum access required to query the token. Using
+        // Process.Handle here often fails on elevated targets unnecessarily.
+        var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        if (handle == IntPtr.Zero) return null;
         try
         {
-            using var process = Process.GetProcessById(checked((int)processId));
-            if (!OpenProcessToken(process.Handle, TokenQuery, out var token))
+            if (!OpenProcessToken(handle, TokenQuery, out var token))
                 return null;
             try
             {
@@ -116,12 +122,7 @@ internal static class TargetCompatibility
             }
             finally { CloseHandle(token); }
         }
-        catch (Exception ex) when (ex is ArgumentException or Win32Exception
-            or InvalidOperationException or System.Security.SecurityException
-            or OverflowException or NotSupportedException)
-        {
-            return null; // Unknown privileges never lead to a false "safe" assertion.
-        }
+        finally { CloseHandle(handle); }
     }
 
     private static string SafeProcessName(string? name)
