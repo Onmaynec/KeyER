@@ -29,6 +29,7 @@ internal static class Program
             await Check("Reliability 0.8: compatible target diagnostic states", CompatibilityMatrix);
             await Check("Reliability 0.8: stop on unexpected modifiers", UnexpectedModifiers);
             await Check("Reliability 0.8: no retry after interrupted session", InterruptedSessionRestart);
+            await Check("Reliability 0.8: privacy-safe completion and interruption reports", SessionReportValidation);
             await Check("Stop cancels future keystrokes", CancelDuringTyping);
             await Check("Pause/resume and stop during pause", PauseAndStop);
             await Check("Global hotkeys do not accidentally require Win", Hotkeys);
@@ -560,6 +561,37 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task SessionReportValidation()
+    {
+        var interrupted = TypingSessionReport.Create(TypingOutcome.Interrupted,
+            processed: 25, total: 100, TimeSpan.FromSeconds(9.25), "Code<>/Sensitive.cs");
+        Assert(interrupted.Processed == 25 && interrupted.Total == 100,
+            "Partial progress should remain visible.");
+        Assert(interrupted.Title.Contains("прерван"), "Interruption report title.");
+        Assert(interrupted.Guidance.Contains("Отпустите"), "Interruption recovery action.");
+        Assert(interrupted.Application == "CodeSensitive.cs",
+            "Process label sanitized; never expose filenames or title fields.");
+        Assert(!interrupted.ClipboardText.Contains("Sensitive.cs") ||
+               interrupted.Application == "CodeSensitive.cs",
+               "No user document content should be appended to the report.");
+
+        var complete = TypingSessionReport.Create(TypingOutcome.Completed, 110,
+            80, TimeSpan.FromSeconds(18), "notepad");
+        Assert(complete.Processed == 80, "Progress clamped to total.");
+        Assert(complete.Guidance.Contains("сравните"), "Do not claim destination acceptance.");
+        Assert(complete.ClipboardText.Contains("80 из 80"), "Copyable summary has progress.");
+        Assert(complete.Outcome == TypingOutcome.Completed, "Completed classification.");
+
+        var stopped = TypingSessionReport.Create(TypingOutcome.Cancelled,
+            -50, -1, TimeSpan.FromSeconds(-1), null);
+        Assert(stopped.Processed == 0 && stopped.Total == 0,
+            "Negative counts clamped.");
+        Assert(stopped.Duration == TimeSpan.Zero, "Negative duration clamped.");
+        Assert(stopped.Guidance.Contains("часть текста"),
+            "Stopped session must warn about partial content.");
+        return Task.CompletedTask;
+    }
+
     private static async Task UnexpectedModifiers()
     {
         foreach (var mode in new[] { TypingMode.Text, TypingMode.Code })
@@ -635,6 +667,9 @@ internal static class Program
         await engine.StartAsync(new string('a', 70), TypingMode.Text, Profile(), Window);
         Assert(device.Events == 10, $"Unexpected events after stop: {device.Events}");
         Assert(engine.LastOutcome == TypingOutcome.Cancelled, "Stopped outcome");
+        Assert(engine.LastProcessedCharacters >= 0 &&
+               engine.LastProcessedCharacters <= engine.LastTotalCharacters,
+            "Cancelled session must retain safe progress bounds.");
         Assert(status == "Остановлено пользователем.", "Stop status");
         Assert(!engine.IsRunning && !engine.IsPaused, "Should reset after stop.");
     }
@@ -965,6 +1000,9 @@ internal static class Program
                 Assert(Descendants(main).OfType<StudioButton>().Any(b =>
                     b.Text.Contains("Окно", StringComparison.Ordinal)),
                     "Target compatibility check must be visible.");
+                Assert(Descendants(main).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Отчёт", StringComparison.Ordinal)),
+                    "In-memory session report must be discoverable.");
                 Assert(Descendants(main).OfType<ComboBox>().Any(),
                     "Profile and language selectors.");
                 Assert(Descendants(main).OfType<StudioButton>().Any(b =>
@@ -983,6 +1021,14 @@ internal static class Program
                     b.Text.Contains("Вставить", StringComparison.Ordinal)), "Onboarding paste action.");
                 Assert(Descendants(onboarding!).OfType<StudioButton>().Any(b =>
                     b.Text.Contains("Открыть", StringComparison.Ordinal)), "Onboarding file action.");
+
+                using (var reportWindow = new SessionReportForm(
+                    TypingSessionReport.Create(TypingOutcome.FocusLost, 10, 60,
+                        TimeSpan.FromSeconds(2), "notepad")))
+                {
+                    Assert(Descendants(reportWindow).OfType<StudioButton>().Count() >= 2,
+                        "Themed report has copy and close actions.");
+                }
 
                 using var settings = new SettingsForm(new AppSettings());
                 Assert(Descendants(settings).OfType<StudioButton>().Count() >= 6,
