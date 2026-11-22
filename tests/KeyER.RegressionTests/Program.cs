@@ -26,6 +26,9 @@ internal static class Program
             await Check("Text v0.2: smooth speed and paragraph breaks", HumanTextTiming);
             await Check("Text v0.2: short and long words, digits and familiar pairs", HumanTextCadenceRules);
             await Check("Foreground loss prevents further keystrokes", ForegroundLoss);
+            await Check("Reliability 0.8: compatible target diagnostic states", CompatibilityMatrix);
+            await Check("Reliability 0.8: stop on unexpected modifiers", UnexpectedModifiers);
+            await Check("Reliability 0.8: no retry after interrupted session", InterruptedSessionRestart);
             await Check("Stop cancels future keystrokes", CancelDuringTyping);
             await Check("Pause/resume and stop during pause", PauseAndStop);
             await Check("Global hotkeys do not accidentally require Win", Hotkeys);
@@ -139,6 +142,18 @@ internal static class Program
                 {
                     settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     bitmap.Save(Path.Combine(directory, "KeyER-Studio-Appearance.png"));
+                }
+
+                using (var checkDialog = new TargetDiagnosticsForm(
+                    TargetCompatibility.Evaluate(true, false, true, true,
+                        false, false, false, false, "notepad")))
+                {
+                    checkDialog.Show(main);
+                    Application.DoEvents();
+                    using var bitmap = new Bitmap(checkDialog.Width, checkDialog.Height);
+                    checkDialog.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "KeyER-Studio-Compatibility.png"));
+                    checkDialog.Close();
                 }
 
                 settings.Close();
@@ -504,6 +519,96 @@ internal static class Program
         Equal(source.Replace("\r\n", "\n"), device.Text, "code output");
     }
 
+    private static Task CompatibilityMatrix()
+    {
+        static TargetHealthReport Check(TargetHealthCode expected,
+            bool hasWindow = true, bool own = false, bool available = true,
+            bool foreground = true, bool minimized = false, bool hung = false,
+            bool? targetElevation = false, bool? currentElevation = false)
+        {
+            var report = TargetCompatibility.Evaluate(hasWindow, own, available,
+                foreground, minimized, hung, targetElevation, currentElevation, "notepad");
+            Assert(report.Code == expected,
+                $"Expected compatibility={expected}, returned {report.Code}.");
+            Assert(report.CanType == (expected == TargetHealthCode.Ready),
+                "CanType must be restricted to Ready.");
+            Assert(!string.IsNullOrWhiteSpace(report.Guidance), "Guidance should be actionable.");
+            return report;
+        }
+
+        Check(TargetHealthCode.NoWindow, hasWindow: false);
+        Check(TargetHealthCode.OwnWindow, own: true);
+        Check(TargetHealthCode.WindowUnavailable, available: false);
+        Check(TargetHealthCode.NotForeground, foreground: false);
+        Check(TargetHealthCode.Minimized, minimized: true);
+        Check(TargetHealthCode.NotResponding, hung: true);
+        Check(TargetHealthCode.ElevatedTarget, targetElevation: true, currentElevation: false);
+        Check(TargetHealthCode.Ready, targetElevation: true, currentElevation: true);
+        Check(TargetHealthCode.Ready, targetElevation: null, currentElevation: false);
+        Check(TargetHealthCode.Ready, targetElevation: false, currentElevation: null);
+
+        var name = TargetCompatibility.Evaluate(true, false, true, true,
+            false, false, false, false, "notepad<>:/secret/title");
+        Assert(name.ProcessLabel == "notepadsecrettitle",
+            "Process labels should strip path/title punctuation.");
+        Assert(!name.Summary.Contains("secret", StringComparison.OrdinalIgnoreCase),
+            "No target title data must leak into the summary.");
+
+        var noName = TargetCompatibility.Evaluate(true, false, true, true,
+            false, false, null, null, null);
+        Assert(noName.ProcessLabel.Contains("Неизвестное"), "Unknown process state.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task UnexpectedModifiers()
+    {
+        foreach (var mode in new[] { TypingMode.Text, TypingMode.Code })
+        {
+            var device = new BufferDevice();
+            var engine = Engine(device, 102);
+            device.OnEvent = () =>
+            {
+                if (device.Events == 12) device.ModifiersHeld = true;
+            };
+            string? diagnostic = null;
+            engine.StatusChanged += message => diagnostic = message;
+            await engine.StartAsync(new string('a', 80), mode, Profile(0m),
+                Window, mode == TypingMode.Code ? "test.cs" : null);
+            Assert(device.Events == 12,
+                $"Unintended modifiers must interrupt before the next event: {mode}.");
+            Assert(engine.LastOutcome == TypingOutcome.Interrupted,
+                $"Interrupted outcome for {mode}.");
+            Assert(diagnostic is not null && diagnostic.Contains("зажаты"),
+                "User should see modifier interruption reason.");
+            Assert(!engine.IsRunning && !engine.IsPaused,
+                "Interrupted session must release engine state.");
+        }
+    }
+
+    private static async Task InterruptedSessionRestart()
+    {
+        var device = new BufferDevice();
+        var engine = Engine(device, 5);
+        device.OnEvent = () =>
+        {
+            if (device.Events == 8) device.ModifiersHeld = true;
+        };
+        await engine.StartAsync(new string('a', 35), TypingMode.Text,
+            Profile(0m), Window);
+        Assert(engine.LastOutcome == TypingOutcome.Interrupted,
+            "First interrupted attempt.");
+
+        device.ModifiersHeld = false;
+        device.OnEvent = null;
+        var firstLength = device.Text.Length;
+        await engine.StartAsync("new session", TypingMode.Text,
+            Profile(0m), Window);
+        Assert(engine.LastOutcome == TypingOutcome.Completed,
+            "Fresh session should complete after interference ends.");
+        Assert(device.Text[firstLength..] == "new session",
+            "Restart should only type the new content, not auto-repeat partial text.");
+    }
+
     private static async Task ForegroundLoss()
     {
         var device = new BufferDevice { ChangeFocusAfter = 10 };
@@ -857,6 +962,9 @@ internal static class Program
                     "Owner-painted primary and quick actions.");
                 Assert(Descendants(main).OfType<StudioProgress>().Count() == 1,
                     "Custom progress bar.");
+                Assert(Descendants(main).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Окно", StringComparison.Ordinal)),
+                    "Target compatibility check must be visible.");
                 Assert(Descendants(main).OfType<ComboBox>().Any(),
                     "Profile and language selectors.");
                 Assert(Descendants(main).OfType<StudioButton>().Any(b =>
