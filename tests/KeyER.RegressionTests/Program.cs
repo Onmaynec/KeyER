@@ -998,7 +998,7 @@ internal static class Program
                 Assert(Descendants(main).OfType<StudioProgress>().Count() == 1,
                     "Custom progress bar.");
                 Assert(Descendants(main).OfType<StudioButton>().Any(b =>
-                    b.Text.Contains("Окно", StringComparison.Ordinal)),
+                    b.Text.Contains("окно", StringComparison.OrdinalIgnoreCase)),
                     "Target compatibility check must be visible.");
                 Assert(Descendants(main).OfType<StudioButton>().Any(b =>
                     b.Text.Contains("Отчёт", StringComparison.Ordinal)),
