@@ -540,6 +540,10 @@ internal static class Program
         Check(TargetHealthCode.NoWindow, hasWindow: false);
         Check(TargetHealthCode.OwnWindow, own: true);
         Check(TargetHealthCode.WindowUnavailable, available: false);
+        Assert(TargetCompatibility.Evaluate(true, false, true, true, false, false,
+                null, null, "notepad", processAvailable: false).Code ==
+                TargetHealthCode.ProcessUnavailable,
+            "Unknown target PID must prevent typing.");
         Check(TargetHealthCode.NotForeground, foreground: false);
         Check(TargetHealthCode.Minimized, minimized: true);
         Check(TargetHealthCode.NotResponding, hung: true);
