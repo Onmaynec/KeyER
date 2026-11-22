@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace KeyER;
 
 public sealed partial class MainForm
@@ -54,7 +52,7 @@ public sealed partial class MainForm
         try
         {
             // Never autosave snippets. Only the user's explicit Save As writes code.
-            File.WriteAllText(dialog.FileName, _editor.Text, new UTF8Encoding(false));
+            AtomicDocumentWriter.WriteText(dialog.FileName, _editor.Text);
             _openedFilePath = dialog.FileName;
             _settings.SourceFileName = Path.GetFileName(dialog.FileName);
             _modified = false;
