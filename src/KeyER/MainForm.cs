@@ -37,6 +37,8 @@ public sealed partial class MainForm : Form
     private readonly StudioButton _start;
     private readonly StudioButton _pause;
     private readonly StudioButton _stop;
+    private readonly StudioButton _diagnostics;
+    private bool _checkingTarget;
     private readonly StudioButton _textModeButton;
     private readonly StudioButton _codeModeButton;
     private readonly StudioButton _themeToggle;
@@ -657,18 +659,26 @@ public sealed partial class MainForm : Form
         _start = new StudioButton { Text = "▶    Начать набор", Width = 184, Height = 44, Tone = ButtonTone.Primary };
         _pause = new StudioButton { Text = "Ⅱ    Пауза", Width = 141, Height = 44, Tone = ButtonTone.Soft };
         _stop = new StudioButton { Text = "■    Остановить", Width = 151, Height = 44, Tone = ButtonTone.Outline };
+        _diagnostics = new StudioButton
+        {
+            Text = "◉   Проверить окно", Width = 171, Height = 44,
+            Tone = ButtonTone.Quiet
+        };
         _start.Click += async (_, _) => await StartWithCountdownAsync();
         _pause.Click += (_, _) => { _engine.TogglePause(); UpdateButtons(); };
         _stop.Click += (_, _) => StopTyping();
-        actions.Controls.AddRange([_start, _pause, _stop]);
+        _diagnostics.Click += async (_, _) => await CheckTargetAsync();
+        actions.Controls.AddRange([_start, _pause, _stop, _diagnostics]);
         actions.Resize += (_, _) =>
         {
             var tight = actions.ClientSize.Width < 530;
             _start.Width = tight ? 135 : 184;
             _pause.Width = tight ? 107 : 141;
-            _stop.Width = tight ? 110 : 151;
+            _stop.Width = tight ? 105 : 151;
+            _diagnostics.Width = tight ? 104 : 171;
             _start.Text = tight ? "▶   Начать" : "▶    Начать набор";
             _stop.Text = tight ? "■   Стоп" : "■    Остановить";
+            _diagnostics.Text = tight ? "◉  Окно" : "◉   Проверить окно";
         };
         bottomLayout.Controls.Add(actions, 0, 2);
 
@@ -701,6 +711,8 @@ public sealed partial class MainForm : Form
         _tips.SetToolTip(_start, "Старт с обратным отсчётом. Переключитесь в целевое окно и установите курсор.");
         _tips.SetToolTip(_pause, "Приостановить или возобновить текущий набор");
         _tips.SetToolTip(_stop, "Остановить набор без дальнейшего ввода");
+        _tips.SetToolTip(_diagnostics,
+            "Через три секунды проверить выбранное окно, его состояние и совместимость по правам доступа.");
         _tips.SetToolTip(_saveSource, "Сохранить в отдельный файл (Ctrl+Shift+S)");
         _tips.SetToolTip(_profiles, "Выберите скорость, характер ошибок и стиль набора");
         ApplyCompactLayout();
@@ -1077,9 +1089,10 @@ public sealed partial class MainForm : Form
     private void UpdateButtons()
     {
         var running = _engine.IsRunning;
-        _start.Enabled = !running && !_countingDown && !_ideBusy && _editor.TextLength > 0;
+        _start.Enabled = !running && !_countingDown && !_ideBusy && !_checkingTarget && _editor.TextLength > 0;
+        _diagnostics.Enabled = !running && !_countingDown && !_ideBusy && !_checkingTarget;
         _pause.Enabled = running;
-        _stop.Enabled = running || _countingDown || _ideBusy;
+        _stop.Enabled = running || _countingDown || _ideBusy || _checkingTarget;
         _pause.Text = _engine.IsPaused ? "▶    Продолжить" : "Ⅱ    Пауза";
         _mode.Enabled = !running && !_countingDown && !_ideBusy;
         _profiles.Enabled = !running && !_countingDown && !_ideBusy;
@@ -1139,9 +1152,44 @@ public sealed partial class MainForm : Form
         UpdateStats();
     }
 
+    private async Task CheckTargetAsync()
+    {
+        if (_engine.IsRunning || _countingDown || _ideBusy || _checkingTarget) return;
+        _checkingTarget = true;
+        _countdownCts = new CancellationTokenSource();
+        UpdateButtons();
+        try
+        {
+            for (var remaining = 3; remaining > 0; remaining--)
+            {
+                SetStatus($"Проверка окна через {remaining} сек. Перейдите в редактор и установите курсор.");
+                await Task.Delay(1000, _countdownCts.Token);
+            }
+            _countdownCts.Token.ThrowIfCancellationRequested();
+            var report = TargetCompatibility.Inspect(Native.GetForegroundWindow());
+            _checkingTarget = false;
+            UpdateButtons();
+            SetStatus(report.CanType ? "Окно готово к попытке ввода. Проверьте фокус курсора."
+                                    : report.Summary);
+            using var form = new TargetDiagnosticsForm(report);
+            form.ShowDialog(this);
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus("Проверка совместимости отменена.");
+        }
+        finally
+        {
+            _checkingTarget = false;
+            _countdownCts?.Dispose();
+            _countdownCts = null;
+            UpdateButtons();
+        }
+    }
+
     private async Task StartWithCountdownAsync()
     {
-        if (_engine.IsRunning || _countingDown || _ideBusy) return;
+        if (_engine.IsRunning || _countingDown || _ideBusy || _checkingTarget) return;
         _countdownCts = new CancellationTokenSource();
         _countingDown = true;
         UpdateButtons();
@@ -1168,15 +1216,16 @@ public sealed partial class MainForm : Form
 
     private async Task StartNowAsync(IntPtr target)
     {
-        if (_engine.IsRunning || _ideBusy) return;
+        if (_engine.IsRunning || _ideBusy || _checkingTarget) return;
         if (string.IsNullOrEmpty(_editor.Text))
         {
             SetStatus("Сначала вставьте или откройте текст.");
             return;
         }
-        if (target == IntPtr.Zero || Native.IsOwnWindow(target))
+        var readiness = TargetCompatibility.Inspect(target);
+        if (!readiness.CanType)
         {
-            SetStatus("Курсор должен быть в окне другого приложения. Набор не запущен.");
+            SetStatus(readiness.Summary + " " + readiness.Guidance);
             return;
         }
 
