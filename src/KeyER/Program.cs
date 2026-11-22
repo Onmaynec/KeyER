@@ -6,6 +6,15 @@ internal static class Program
     private static void Main()
     {
         ApplicationConfiguration.Initialize();
+        using var singleInstance = SingleInstanceGuard.TryAcquire();
+        if (singleInstance is null)
+        {
+            MessageBox.Show(
+                "KeyER уже запущен. Переключитесь в существующее окно приложения.\n" +
+                "Повторный экземпляр не открывается, чтобы избежать конфликта глобальных горячих клавиш.",
+                "KeyER Studio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         Application.ThreadException += (_, e) =>
         {
             DiagnosticLog.Error("ui-thread", e.Exception);
