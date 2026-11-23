@@ -48,6 +48,9 @@ internal static class Program
             await Check("Studio 0.7: palette and appearance validation", StudioAppearanceValidation);
             await Check("Studio 0.7: unicode-aware find, wrap and match counts", StudioSearch);
             await Check("Studio 0.7: main window/settings construction on STA", StudioUiSmoke);
+            await Check("Editor 1.2: stable syntax coloring without repaints or scrolling", EditorSyntaxStability);
+            await Check("Editor 1.2: focus mode, code scrolling and line wrap", EditorFocusAndWrap);
+            await Check("Editor 1.2: Ctrl+S direct save of opened documents", EditorSaveCurrent);
             await Check("IDE 0.4: same-user pipe roundtrip and session invalidation", IdePipeRoundTrip);
             await Check("IDE 0.4: verified mode remains opt-in", IdeSettingsSafety);
             await Check("Human 0.5: style presets and settings migration", HumanStylePresets);
@@ -1501,6 +1504,178 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task EditorSyntaxStability()
+    {
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                // Work with a real native visible RichEdit window, not a mock.
+                using var dialog = new Form
+                {
+                    Size = new Size(640, 420), StartPosition = FormStartPosition.Manual,
+                    Location = new Point(100, 100)
+                };
+                using var editor = new RichTextBox
+                {
+                    Dock = DockStyle.Fill, WordWrap = false,
+                    ScrollBars = RichTextBoxScrollBars.Both,
+                    Font = new Font("Consolas", 10F)
+                };
+                dialog.Controls.Add(editor);
+                dialog.Show();
+                editor.Text = string.Join("\n", Enumerable.Range(1, 180)
+                    .Select(i => $"using System; // line {i} public class A{i} {{ int value = {i}; }}"));
+                Application.DoEvents();
+                using var painter = new SyntaxPainter(editor)
+                {
+                    Enabled = true, IsCode = true, Language = "CSharp",
+                    FileName = "render.cs"
+                };
+                editor.Select(editor.Text.IndexOf("line 100", StringComparison.Ordinal), 0);
+                editor.ScrollToCaret();
+                Application.DoEvents();
+                var caret = editor.SelectionStart;
+                var beforeTop = editor.GetCharIndexFromPosition(new Point(4, 4));
+                painter.Render();
+                Application.DoEvents();
+                var afterTop = editor.GetCharIndexFromPosition(new Point(4, 4));
+                Assert(editor.SelectionStart == caret,
+                    "Syntax painter must not move the user's caret.");
+                Assert(Math.Abs(afterTop - beforeTop) <= 100,
+                    $"Syntax painter must not jump the viewport: {beforeTop}→{afterTop}.");
+                Assert(painter.CompletedPaints == 1, "One actual initial syntax pass.");
+
+                for (var i = 0; i < 25; i++)
+                {
+                    painter.Schedule();
+                    painter.Render();
+                }
+                Assert(painter.CompletedPaints == 1 && painter.SuppressedSchedules >= 25,
+                    "Repeated idle/stats scheduling must not recolor unchanged text.");
+                Assert(editor.SelectionStart == caret,
+                    "Unchanged syntax scheduling must not change selection.");
+
+                editor.AppendText("\n// user edited the actual code");
+                painter.Render();
+                Assert(painter.CompletedPaints == 2,
+                    "Exactly one additional pass after a real text mutation.");
+                painter.Render();
+                Assert(painter.CompletedPaints == 2,
+                    "No extra passes after a settled code modification.");
+
+                painter.IsCode = false;
+                painter.Render();
+                Assert(painter.CompletedPaints == 3,
+                    "Explicit mode change should produce one reset pass.");
+                dialog.Close();
+            }
+            catch (Exception ex) { error = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(20)))
+            throw new Exception("Syntax stability STA test timed out.");
+        if (error is not null) throw new Exception("Syntax stability failed.", error);
+        return Task.CompletedTask;
+    }
+
+    private static Task EditorFocusAndWrap()
+    {
+        Exception? issue = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var main = new MainForm();
+                var editor = Descendants(main).OfType<RichTextBox>().Single();
+                var root = Descendants(main).OfType<TableLayoutPanel>()
+                    .FirstOrDefault(p => p.ColumnCount == 2 &&
+                        p.ColumnStyles.Count > 0 && p.ColumnStyles[0].Width == 231);
+                Assert(root is not null, "Sidebar layout must exist.");
+                var source = "class Example { string LongLine = \"" +
+                    new string('x', 400) + "\"; }";
+                editor.Text = source;
+
+                var invoke = typeof(MainForm).GetMethod("ToggleFocusMode",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                Assert(invoke is not null, "F11 focus toggle must exist.");
+                invoke!.Invoke(main, null);
+                Assert(root!.ColumnStyles[0].Width == 0,
+                    "Focus mode frees the sidebar width for editing.");
+                Assert(Descendants(main).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Панель F11", StringComparison.Ordinal)),
+                    "Focus mode provides a visible way to exit.");
+                invoke.Invoke(main, null);
+                Assert(root.ColumnStyles[0].Width > 0,
+                    "Normal sidebar returns after exiting focus mode.");
+
+                var wrap = typeof(MainForm).GetMethod("ToggleWordWrap",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                Assert(wrap is not null, "Alt+Z wrap toggle must exist.");
+                wrap!.Invoke(main, null);
+                Assert(editor.WordWrap && editor.ScrollBars == RichTextBoxScrollBars.Vertical,
+                    "Wrapped code should have logical lines without horizontal scrolling.");
+                wrap.Invoke(main, null);
+                Assert(!editor.WordWrap && editor.ScrollBars == RichTextBoxScrollBars.Both,
+                    "Unwrapped code must retain a horizontal scrollbar.");
+                Assert(editor.Text == source, "View toggles must not mutate source code.");
+            }
+            catch (Exception ex) { issue = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(15)))
+            throw new Exception("Editor view STA test timed out.");
+        if (issue is not null) throw new Exception("Editor focus/wrap failed.", issue);
+        return Task.CompletedTask;
+    }
+
+    private static Task EditorSaveCurrent()
+    {
+        Exception? issue = null;
+        var thread = new Thread(() =>
+        {
+            var path = Path.Combine(Path.GetTempPath(),
+                "KeyER-editor-" + Guid.NewGuid().ToString("N") + ".cs");
+            try
+            {
+                File.WriteAllText(path, "original");
+                using var main = new MainForm();
+                var editor = Descendants(main).OfType<RichTextBox>().Single();
+                editor.Text = "updated text with кириллица";
+                var fileField = typeof(MainForm).GetField("_openedFilePath",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                fileField!.SetValue(main, path);
+                var save = typeof(MainForm).GetMethod("SaveCurrentSource",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                Assert(save is not null, "Ctrl+S current-file save routine exists.");
+                save!.Invoke(main, null);
+                Assert(File.ReadAllText(path) == editor.Text,
+                    "Ctrl+S must update existing file without Save As dialog.");
+                var backups = Directory.EnumerateFiles(Path.GetDirectoryName(path)!,
+                    Path.GetFileName(path) + ".*.tmp");
+                Assert(!backups.Any(), "Atomic save should not leak temp files.");
+            }
+            catch (Exception ex) { issue = ex; }
+            finally { if (File.Exists(path)) File.Delete(path); }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(12)))
+            throw new Exception("Direct save STA test timed out.");
+        if (issue is not null) throw new Exception("Save current file failed.", issue);
+        return Task.CompletedTask;
+    }
+
     private static Task StudioAppearanceValidation()
     {
         Theme.Configure(AppearanceMode.Dark, AccentTheme.Iris);
@@ -1510,7 +1685,19 @@ internal static class Program
         Assert(Theme.Background != darkBackground, "Dark and light palettes must differ.");
         Assert(Theme.Accent != darkAccent, "Accent should be contrast-adjusted in light mode.");
         Theme.Configure(AppearanceMode.Dark, AccentTheme.Mint);
-        Assert(Theme.Accent != darkAccent, "Changing accent should update the palette.");
+        Assert(Theme.Background == Color.Black,
+            "True-black dark background requested by user.");
+        Assert(Theme.Accent == darkAccent && Theme.AccentFill == Color.White,
+            "Dark mode should remain strictly monochrome across accent choices.");
+        Assert(Theme.Foreground.R > 245 && Theme.Foreground.G == Theme.Foreground.R,
+            "Dark mode should use near-white readable ink.");
+        Assert(Theme.Surface.R == Theme.Surface.G && Theme.Surface.G == Theme.Surface.B &&
+               Theme.Input.R == Theme.Input.B,
+            "No blue tint in dark panels and editor.");
+        Theme.Configure(AppearanceMode.Light, AccentTheme.Iris);
+        Assert(Theme.Background == Color.FromArgb(244, 246, 252),
+            "Existing light palette must stay unchanged.");
+        Theme.Configure(AppearanceMode.Dark, AccentTheme.Iris);
 
         var invalid = new AppSettings
         {
@@ -1572,7 +1759,9 @@ internal static class Program
                 Assert(main.Width >= 785 && main.Height >= 560, "Studio window dimensions.");
 
                 var editor = Descendants(main).OfType<RichTextBox>().Single();
-                Assert(editor.AcceptsTab && !editor.WordWrap, "Editor usability.");
+                Assert(editor.AcceptsTab && !editor.WordWrap &&
+                       editor.ScrollBars == RichTextBoxScrollBars.Both,
+                    "Editor must support horizontal scrolling in code mode.");
                 Assert(Descendants(main).OfType<EditorGutter>().Count() == 1,
                     "Dedicated line-number gutter.");
                 Assert(Descendants(main).OfType<StudioButton>().Count() >= 10,
@@ -1587,6 +1776,13 @@ internal static class Program
                     "In-memory session report must be discoverable.");
                 Assert(Descendants(main).OfType<ComboBox>().Any(),
                     "Profile and language selectors.");
+                Assert(Descendants(main).OfType<ComboBox>().Where(c => c.Visible ||
+                       c.AccessibleName == "Язык исходного кода")
+                       .All(c => c.DrawMode == DrawMode.OwnerDrawFixed),
+                    "All visible dropdown selections must use Studio owner drawing.");
+                Assert(Descendants(main).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Фокус", StringComparison.Ordinal)),
+                    "Focus mode must be visible in the header.");
                 Assert(Descendants(main).OfType<StudioButton>().Any(b =>
                     b.Text.Contains("Сохранить", StringComparison.Ordinal)),
                     "Source Save As action exists.");
