@@ -345,7 +345,7 @@ public sealed class SettingsForm : Form
         paneHost.Controls.Add(appearancePane);
         _pages.Add("Appearance", appearancePane);
 
-        // Public Beta support center. The report never contains source text,
+        // Local diagnostics and support center. The report never contains source text,
         // settings values such as hotkeys, file names or raw exception messages.
         var diagnosticsPane = new Panel
         {
@@ -409,7 +409,7 @@ public sealed class SettingsForm : Form
             {
                 Title = "Сохранить локальный диагностический отчёт",
                 Filter = "Текстовый отчёт (*.txt)|*.txt",
-                FileName = "KeyER-beta-diagnostics.txt",
+                FileName = "KeyER-diagnostics.txt",
                 DefaultExt = "txt", AddExtension = true,
                 OverwritePrompt = true, RestoreDirectory = true
             };
