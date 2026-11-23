@@ -1544,18 +1544,18 @@ internal static class Program
         var active = new DrawItemEventArgs(graphics, picker.Font, bounds,
             0, DrawItemState.Selected);
         method!.Invoke(null, [picker, active]);
-        Assert(bitmap.GetPixel(3, 3) == Color.White,
+        Assert(bitmap.GetPixel(3, 3).ToArgb() == Color.White.ToArgb(),
             "Expanded dark dropdown selection should use a white highlight.");
 
         var collapsed = new DrawItemEventArgs(graphics, picker.Font, bounds, 0,
             DrawItemState.Selected | DrawItemState.ComboBoxEdit);
         method.Invoke(null, [picker, collapsed]);
-        Assert(bitmap.GetPixel(3, 3) == Theme.SurfaceRaised,
+        Assert(bitmap.GetPixel(3, 3).ToArgb() == Theme.SurfaceRaised.ToArgb(),
             "Closed dark dropdown must stay near-black, not a large white rectangle.");
 
         Theme.Configure(AppearanceMode.Light, AccentTheme.Iris);
         method.Invoke(null, [picker, active]);
-        Assert(bitmap.GetPixel(3, 3) == Theme.AccentFill,
+        Assert(bitmap.GetPixel(3, 3).ToArgb() == Theme.AccentFill.ToArgb(),
             "Light dropdown continues using the original colored accent.");
         Theme.Configure(AppearanceMode.Dark, AccentTheme.Iris);
         return Task.CompletedTask;
