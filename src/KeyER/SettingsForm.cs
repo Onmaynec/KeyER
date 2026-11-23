@@ -505,7 +505,7 @@ public sealed class SettingsForm : Form
             "Hotkeys" => ("Горячие клавиши", "Действия KeyER всегда под рукой."),
             "Appearance" => ("Оформление", "Цвета, плотность, шрифт и рабочее пространство."),
             "Diagnostics" => ("Диагностика", "Бета-отчёт для поиска ошибок. Данные остаются у вас."),
-            _ => ("Поведение", "Стиль печати, концентрация, усталость и ошибки.")
+            _ => ("Поведение", "Humanizer 3.0: моторика рук, ритм, внимание и ошибки.")
         };
         FilterProfileFields();
     }
@@ -623,7 +623,7 @@ public sealed class SettingsForm : Form
 
         var p = _selected;
         var styleRow = table.RowCount++;
-        table.Controls.Add(Theme.Label("Human Behavior 2.0 — стиль набора", 9.1F, true), 0, styleRow);
+        table.Controls.Add(Theme.Label("Humanizer 3.0 — стиль набора", 9.1F, true), 0, styleRow);
         var stylePicker = new ComboBox { Width = 190 };
         Theme.StyleCombo(stylePicker);
         stylePicker.Items.AddRange(Enum.GetNames<HumanStyle>());
@@ -638,14 +638,23 @@ public sealed class SettingsForm : Form
 
         var styleNoteRow = table.RowCount++;
         var styleNote = Theme.Label(
-            "Beginner: медленно, часто исправляет ошибки. Casual: обычный набор. " +
-            "Developer: ритм программиста. Professional: быстро, редко ошибается. " +
-            "Custom: ручные параметры (без сброса).", 8.3F);
+            "Beginner: неуверенный темп и поиск клавиш. Casual: обычный набор. " +
+            "Developer: ритм кода. Professional: уверенный автоматизм. " +
+            "Custom: индивидуальные значения без сброса. Не использует биометрию.", 8.3F);
         styleNote.ForeColor = Theme.Muted;
         styleNote.MaximumSize = new Size(450, 0);
         styleNote.Margin = new Padding(4, 8, 4, 12);
         table.Controls.Add(styleNote, 0, styleNoteRow);
         table.SetColumnSpan(styleNote, 2);
+
+        Number(table, "Humanizer: интенсивность моторики (%)", 0, 100, 5,
+            p.HumanizerStrength, v => p.HumanizerStrength = (int)v);
+        Number(table, "Влияние расстояния между клавишами (%)", 0, 100, 5,
+            p.KeyTravelInfluence, v => p.KeyTravelInfluence = (int)v);
+        Number(table, "Память ритма соседних нажатий (%)", 0, 96, 2,
+            p.RhythmMemoryPercent, v => p.RhythmMemoryPercent = (int)v);
+        Number(table, "Микрозадержки на сложных переходах (%)", 0, 35, 1,
+            p.MicroHesitationPercent, v => p.MicroHesitationPercent = (int)v);
 
         Number(table, "Окно концентрации: минимум символов", 5, 1000, 5, p.FocusMinCharacters,
             v => p.FocusMinCharacters = (int)v);
