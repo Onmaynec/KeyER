@@ -779,6 +779,9 @@ public sealed partial class MainForm : Form
         _tips.SetToolTip(_sessionReportButton,
             "Итог последней попытки без текста, имён файлов и заголовка целевого окна");
         _tips.SetToolTip(_saveSource, "Сохранить в отдельный файл (Ctrl+S или Ctrl+Shift+S)");
+        _tips.SetToolTip(_focusToggle, "Фокус F11: скрыть боковую панель, увеличить редактор");
+        _tips.SetToolTip(_wrapToggle, "Alt+Z: переносить длинные строки без изменения исходника");
+        _tips.SetToolTip(_lineToggle, "Показать или скрыть номера строк");
         _tips.SetToolTip(_profiles, "Выберите скорость, характер ошибок и стиль набора");
         ApplyCompactLayout();
         UpdateVisualButtons();
@@ -985,14 +988,58 @@ public sealed partial class MainForm : Form
         PersistSettings();
     }
 
+    private void ToggleFocusMode()
+    {
+        _focusMode = !_focusMode;
+        // F11 gives the editor almost the full window width, but the Start,
+        // Pause and Stop bar always remains visible for safe operation.
+        _sidebar.Visible = !_focusMode;
+        _focusToggle.Text = _focusMode ? "▣   Панель F11" : "⛶   Фокус F11";
+        _focusToggle.Tone = _focusMode ? ButtonTone.Primary : ButtonTone.Outline;
+        ApplyCompactLayout();
+        _editor.Focus();
+    }
+
+    private void ToggleWordWrap()
+    {
+        _wordWrap = !_wordWrap;
+        _editor.WordWrap = _wordWrap;
+        _editor.ScrollBars = _wordWrap ? RichTextBoxScrollBars.Vertical :
+            RichTextBoxScrollBars.Both;
+        _gutter.Invalidate();
+        UpdateEditorViewButtons();
+        // Reflow is a view-only operation: no changes to source or undo history.
+    }
+
+    private void ToggleLineNumbers()
+    {
+        _settings.ShowLineNumbers = !_settings.ShowLineNumbers;
+        RefreshEmptyState();
+        UpdateEditorViewButtons();
+        PersistSettings();
+    }
+
+    private void UpdateEditorViewButtons()
+    {
+        if (_wrapToggle is null || _lineToggle is null) return;
+        _wrapToggle.Tone = _wordWrap ? ButtonTone.Outline : ButtonTone.Quiet;
+        _wrapToggle.Text = _wordWrap ? "↵  Перенос: вкл" : "⇄  Перенос";
+        _wrapToggle.Width = _wordWrap ? 133 : 106;
+        _lineToggle.Left = _wrapToggle.Right + 4;
+        _lineToggle.Tone = _settings.ShowLineNumbers
+            ? ButtonTone.Outline : ButtonTone.Quiet;
+        _lineToggle.Text = _settings.ShowLineNumbers ? "№  Строки" : "№  Без строк";
+    }
+
     private void ApplyCompactLayout()
     {
         var compact = _settings.CompactMode;
         _root.ColumnStyles[0].Width = _focusMode ? 0 : compact ? 191 : 231;
         _mainLayout.RowStyles[0].Height = _focusMode ? 75 : compact ? 78 : 94;
         _mainLayout.RowStyles[2].Height = _focusMode ? 119 : compact ? 133 : 149;
-        _pageTitle.Font = Theme.UiFont(compact ? 17F : 20F, FontStyle.Bold);
+        _pageTitle.Font = Theme.UiFont(compact ? 16F : 19F, FontStyle.Bold);
         _pageSubtitle.Visible = !compact && !_focusMode && _pageHeader.ClientSize.Width >= 885;
+        _pageHeader.Invalidate();
     }
 
     private void UpdateVisualButtons()
