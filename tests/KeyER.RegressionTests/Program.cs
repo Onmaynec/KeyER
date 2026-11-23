@@ -36,6 +36,12 @@ internal static class Program
             await Check("Start waits for hotkey modifiers to be released", ModifierRelease);
             await Check("Start rejects unrelated window", RejectWrongWindow);
             await Check("Settings validation handles malformed values", SettingsValidation);
+            await Check("Stable 1.0: settings primary/backup recovery", StableSettingsRecovery);
+            await Check("Stable 1.0: safe migration without custom profile loss", StableMigration);
+            await Check("Stable 1.0: interrupted save never replaces a valid backup", StableSettingsProtection);
+            await Check("Stable 1.0: cancelled startup never contacts target", StableCancelledStartup);
+            await Check("Stable 1.0: multi-profile deterministic soak across Text/Code", StableSoak);
+            await Check("Stable 1.0: atomic global-hotkey reconfiguration and rollback", StableHotkeyRollback);
             await Check("Beta 0.9: single-instance startup guard", BetaSingleInstance);
             await Check("Beta 0.9: atomic document saving", BetaAtomicWrite);
             await Check("Beta 0.9: sanitized support report", BetaSupportPrivacy);
@@ -938,6 +944,278 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private sealed class MockHotkeyBackend : IHotkeyRegistrationBackend
+    {
+        public readonly Dictionary<int, Keys> Active = [];
+        public readonly HashSet<Keys> Blocked = [];
+        public int RegisterCalls { get; private set; }
+        public int UnregisterCalls { get; private set; }
+        public bool Register(IntPtr window, int id, Keys keys)
+        {
+            RegisterCalls++;
+            if (Blocked.Contains(keys) || Active.ContainsKey(id)) return false;
+            Active[id] = keys;
+            return true;
+        }
+        public void Unregister(IntPtr window, int id)
+        {
+            UnregisterCalls++;
+            Active.Remove(id);
+        }
+    }
+
+    private static Task StableHotkeyRollback()
+    {
+        var backend = new MockHotkeyBackend();
+        var start = Keys.Control | Keys.Alt | Keys.F5;
+        var pause = Keys.Control | Keys.Alt | Keys.F6;
+        var stop = Keys.Control | Keys.Alt | Keys.F7;
+        using (var service = new HotkeyRegistrationCoordinator(backend, new IntPtr(123)))
+        {
+            Assert(service.TryApply(start, pause, stop) && service.HasActiveSet,
+                "First shortcut registration.");
+            Assert(backend.Active.Count == 3, "All three shortcuts must be active.");
+            var calls = backend.RegisterCalls;
+            var removes = backend.UnregisterCalls;
+            Assert(service.TryApply(start, pause, stop), "Unchanged settings remain valid.");
+            Assert(backend.RegisterCalls == calls && backend.UnregisterCalls == removes,
+                "Visual-settings change must not unregister active shortcuts.");
+
+            var occupied = Keys.Control | Keys.Alt | Keys.F8;
+            backend.Blocked.Add(occupied);
+            Assert(!service.TryApply(start, pause, occupied),
+                "Occupied shortcut should reject whole change.");
+            Assert(backend.Active.Count == 3 && backend.Active[3] == stop,
+                "Previous shortcut set should be restored transactionally.");
+
+            backend.Blocked.Remove(occupied);
+            Assert(service.TryApply(start, pause, occupied),
+                "Retry after release should work.");
+            Assert(backend.Active[3] == occupied,
+                "New stop key must become active on successful update.");
+            Assert(!service.TryApply(start, start, occupied),
+                "Duplicate keys cannot be registered.");
+            Assert(backend.Active[1] == start && backend.Active[3] == occupied,
+                "Rejected duplicate must not affect existing hotkeys.");
+        }
+        Assert(backend.Active.Count == 0,
+            "Shutdown must unregister exactly the active set.");
+        return Task.CompletedTask;
+    }
+
+    private static Task StableCancelledStartup()
+    {
+        Exception? issue = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var main = new MainForm();
+                var method = typeof(MainForm).GetMethod("StartNowAsync",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                Assert(method is not null, "StartNowAsync must remain cancellable.");
+                using var cancelled = new CancellationTokenSource();
+                cancelled.Cancel();
+                var task = (Task?)method!.Invoke(main,
+                    [new IntPtr(12345), cancelled.Token]);
+                Assert(task is not null, "Cancellable start should return a task.");
+                var rejected = false;
+                try { task!.GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { rejected = true; }
+                Assert(rejected,
+                    "A cancelled countdown must abort before target inspection or key injection.");
+                var engineField = typeof(MainForm).GetField("_engine",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                var engine = (TypingEngine?)engineField?.GetValue(main);
+                Assert(engine is not null && !engine.IsRunning,
+                    "Cancelled startup must not create a running typing session.");
+            }
+            catch (Exception ex) { issue = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(15)))
+            throw new Exception("Cancelled startup STA smoke timed out.");
+        if (issue is not null) throw new Exception("Cancelled startup failed.", issue);
+        return Task.CompletedTask;
+    }
+
+    private static async Task StableSoak()
+    {
+        const string text =
+            "Hello, developer. Привет, программист! " +
+            "Разнообразныеслова ипроверки. Unicode 😀 € — ёЁ.\n" +
+            "This is the second paragraph: 42 tests, commas, dots and values. " +
+            "VeryLongIdentifiersAndCompoundWordsAreUseful.\n";
+        const string code =
+            "using System;\nnamespace Test {\n" +
+            "    // Stable typing across comments and strings\n" +
+            "    static class Code {\n" +
+            "        static string Name(int count) => \"value-\" + count;\n" +
+            "    }\n}\n";
+
+        var seeds = 0;
+        foreach (var style in new[] { HumanStyle.Casual, HumanStyle.Developer,
+                     HumanStyle.Professional })
+        {
+            for (var seed = 0; seed < 45; seed++)
+            {
+                var profile = AppSettings.MakeStylePreset("Stable soak", style);
+                profile.CharactersPerMinute = 1000;
+                profile.TypoPercent = 9m;
+                profile.LongPausePercent = 0;
+                profile.AttentionBreakPercent = 9;
+                profile.LookbackPercent = 10;
+                profile.CodeReviewPercent = 8;
+                profile.CodeLinePauseMilliseconds = 0;
+                profile.CodeFunctionPauseMilliseconds = 0;
+                profile.CodeBlockPauseMilliseconds = 0;
+                profile.CodeSyntaxPauseMilliseconds = 0;
+
+                var textDevice = new BufferDevice();
+                var textEngine = Engine(textDevice, 1000 + seed * 7 + (int)style * 101);
+                await textEngine.StartAsync(text, TypingMode.Text, profile, Window);
+                Assert(textEngine.LastOutcome == TypingOutcome.Completed,
+                    $"Text soak outcome: {style}, {seed}");
+                Equal(text, textDevice.Text, $"Text soak output: {style}, {seed}");
+                Assert(textEngine.LastProcessedCharacters == text.Length,
+                    "Completed Text must report all source units.");
+
+                var codeDevice = new BufferDevice();
+                var codeEngine = Engine(codeDevice, 2000 + seed * 11 + (int)style * 101);
+                await codeEngine.StartAsync(code, TypingMode.Code, profile, Window,
+                    "stable.cs");
+                Assert(codeEngine.LastOutcome == TypingOutcome.Completed,
+                    $"Code soak outcome: {style}, {seed}");
+                Equal(code, codeDevice.Text, $"Code soak output: {style}, {seed}");
+                Assert(codeEngine.LastProcessedCharacters == code.Length,
+                    "Completed Code must report all source units.");
+                seeds++;
+            }
+        }
+        Assert(seeds == 135, "Stable soak must run across expected random seeds.");
+    }
+
+    private static Task StableSettingsRecovery()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "KeyER-stable-recovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "settings.json");
+        try
+        {
+            var fresh = SettingsStore.LoadFromPath(path);
+            Assert(fresh.Origin == SettingsLoadOrigin.Defaults &&
+                   !fresh.HasUnreadableFiles, "Fresh install must be a clean default.");
+            var initial = fresh.Settings;
+            initial.SelectedProfile = "Сбалансированный";
+            SettingsStore.SaveToPath(path, initial);
+            Assert(SettingsStore.LoadFromPath(path).Origin == SettingsLoadOrigin.Primary,
+                "Saved settings should load from primary.");
+            Assert(!File.Exists(path + ".bak"),
+                "First save has no preceding version to back up.");
+
+            var next = initial.Clone();
+            next.SelectedProfile = "Переписка";
+            next.EditorFontSize = 16;
+            SettingsStore.SaveToPath(path, next);
+            Assert(File.Exists(path + ".bak"), "Second save must retain good backup.");
+            Assert(SettingsStore.LoadFromPath(path).Settings.SelectedProfile == "Переписка",
+                "Latest primary should be read.");
+            var stableBackup = File.ReadAllBytes(path + ".bak");
+
+            File.WriteAllText(path, "{ not valid JSON :");
+            var restored = SettingsStore.LoadFromPath(path);
+            Assert(restored.Origin == SettingsLoadOrigin.Backup &&
+                   restored.HasUnreadableFiles,
+                   "Corrupt primary should load preserved valid fallback.");
+            Assert(restored.Settings.SelectedProfile == "Сбалансированный",
+                "Recovered profile should match last valid backup.");
+            SettingsStore.SaveToPath(path, restored.Settings);
+            Assert(SettingsStore.LoadFromPath(path).Origin == SettingsLoadOrigin.Primary,
+                "A clean primary should be restored after save.");
+            Assert(File.ReadAllBytes(path + ".bak").SequenceEqual(stableBackup),
+                "Saving recovery must not overwrite a good .bak with corrupt JSON.");
+            Assert(Directory.EnumerateFiles(folder, "settings.json.corrupt-*").Count() == 1,
+                "Corrupt primary must be preserved for manual recovery.");
+            Assert(!Directory.EnumerateFiles(folder, "*.tmp").Any(),
+                "No residual temp after successful recovery.");
+            return Task.CompletedTask;
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    private static Task StableSettingsProtection()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "KeyER-stable-corrupt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "settings.json");
+        try
+        {
+            File.WriteAllText(path, "{\"SettingsSchemaVersion\":?");
+            File.WriteAllText(path + ".bak", "also invalid");
+            var state = SettingsStore.LoadFromPath(path);
+            Assert(state.Origin == SettingsLoadOrigin.Defaults &&
+                   state.HasUnreadableFiles, "Both corrupt files should not crash startup.");
+            SettingsStore.SaveToPath(path, state.Settings);
+            Assert(SettingsStore.LoadFromPath(path).Origin == SettingsLoadOrigin.Primary,
+                "Save from defaults should produce valid primary.");
+            Assert(File.ReadAllText(path + ".bak") == "also invalid",
+                "Keep original backup data until a valid next generation exists.");
+            Assert(Directory.EnumerateFiles(folder, "settings.json.corrupt-*").Any(),
+                "Preserve broken primary for debugging and user recovery.");
+
+            var second = state.Settings.Clone();
+            second.EditorFontSize = 15;
+            SettingsStore.SaveToPath(path, second);
+            var backed = SettingsStore.LoadFromPath(path + ".bak");
+            Assert(backed.Origin == SettingsLoadOrigin.Primary &&
+                   backed.Settings.EditorFontSize == state.Settings.EditorFontSize,
+                "A valid previous version should replace invalid backup on next save.");
+            return Task.CompletedTask;
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    private static Task StableMigration()
+    {
+        var old = new AppSettings
+        {
+            SettingsSchemaVersion = 1,
+            SelectedProfile = "My custom style",
+            Profiles =
+            [
+                new TypingProfile
+                {
+                    Name = "My custom style",
+                    CharactersPerMinute = 327,
+                    TypoPercent = 4.3m,
+                    TextEnter = TextEnterMode.ShiftEnter
+                }
+            ]
+        };
+        old.Validate();
+        Assert(old.SettingsSchemaVersion == 3,
+            "All older settings schemas must be migrated to current format.");
+        Assert(old.SelectedProfile == "My custom style",
+            "Selected custom profile must be preserved.");
+        Assert(old.GetProfile().CharactersPerMinute == 327 &&
+               old.GetProfile().TextEnter == TextEnterMode.ShiftEnter,
+            "Custom speed and Enter mode must survive migration.");
+        Assert(old.Profiles.Any(p => p.Name == "Переписка") &&
+               old.Profiles.Any(p => p.Name == "Developer"),
+            "Missing default Text and Human profiles must be added once.");
+        var count = old.Profiles.Count;
+        old.Validate();
+        Assert(old.Profiles.Count == count,
+            "Running validation again must not duplicate migrated profiles.");
+        return Task.CompletedTask;
+    }
+
     private static Task BetaSingleInstance()
     {
         var name = @"Local\KeyER.Beta.Regression." + Guid.NewGuid().ToString("N");
@@ -1010,7 +1288,7 @@ internal static class Program
         var settings = new AppSettings();
         settings.Validate();
         var report = BetaSupportReport.Build(settings, entries);
-        Assert(report.Contains("Public Beta"), "Report has beta identity.");
+        Assert(report.Contains("support report"), "Report has support identity.");
         Assert(report.Contains("IOException") && report.Contains("JsonException"),
             "Report preserves safe failure categories.");
         Assert(!report.Contains("password") && !report.Contains("sensitive source"),

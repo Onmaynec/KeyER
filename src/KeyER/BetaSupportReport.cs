@@ -36,7 +36,7 @@ internal static class BetaSupportReport
         var assembly = typeof(AppSettings).Assembly.GetName();
 
         var sb = new StringBuilder();
-        sb.AppendLine("KeyER Studio — Public Beta support report");
+        sb.AppendLine("KeyER Studio — support report");
         sb.AppendLine("Created locally. Share only if you choose to.");
         sb.AppendLine();
         sb.AppendLine($"Version: {assembly.Version}");

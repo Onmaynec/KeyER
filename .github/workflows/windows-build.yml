@@ -32,7 +32,6 @@ jobs:
 
       - name: Render real WinForms UI previews
         shell: pwsh
-        continue-on-error: true
         run: |
           dotnet run --project tests/KeyER.RegressionTests/KeyER.RegressionTests.csproj -c Release --no-restore -- --studio-preview
 
@@ -60,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           dotnet publish src/KeyER/KeyER.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/portable
-          Compress-Archive -Path artifacts/portable/* -DestinationPath artifacts/KeyER-v0.9.0-portable-win-x64.zip -Force
+          Compress-Archive -Path artifacts/portable/* -DestinationPath artifacts/KeyER-v1.0.0-portable-win-x64.zip -Force
 
       - name: Install Inno Setup if needed
         shell: pwsh
@@ -82,16 +81,16 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force ../../artifacts | Out-Null
-          npx --yes @vscode/vsce@3.6.0 package --no-dependencies --out ../../artifacts/KeyER-VSCode-0.9.0.vsix
+          npx --yes @vscode/vsce@3.6.0 package --no-dependencies --out ../../artifacts/KeyER-VSCode-1.0.0.vsix
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Create release SHA256 manifest
         shell: pwsh
         run: |
           $files = @(
-            'artifacts/KeyER-v0.9.0-portable-win-x64.zip',
-            'artifacts/installer/KeyER-v0.9.0-Setup.exe',
-            'artifacts/KeyER-VSCode-0.9.0.vsix'
+            'artifacts/KeyER-v1.0.0-portable-win-x64.zip',
+            'artifacts/installer/KeyER-v1.0.0-Setup.exe',
+            'artifacts/KeyER-VSCode-1.0.0.vsix'
           )
           $lines = foreach ($path in $files) {
             if (-not (Test-Path $path -PathType Leaf)) {
@@ -100,29 +99,29 @@ jobs:
             $hash = (Get-FileHash -Path $path -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $(Split-Path $path -Leaf)"
           }
-          $lines | Set-Content -Path 'artifacts/KeyER-v0.9.0-SHA256SUMS.txt' -Encoding utf8
-          Get-Content 'artifacts/KeyER-v0.9.0-SHA256SUMS.txt'
+          $lines | Set-Content -Path 'artifacts/KeyER-v1.0.0-SHA256SUMS.txt' -Encoding utf8
+          Get-Content 'artifacts/KeyER-v1.0.0-SHA256SUMS.txt'
 
       - name: Upload checksum manifest
         uses: actions/upload-artifact@v4
         with:
-          name: KeyER-v0.9.0-SHA256SUMS
-          path: artifacts/KeyER-v0.9.0-SHA256SUMS.txt
+          name: KeyER-v1.0.0-SHA256SUMS
+          path: artifacts/KeyER-v1.0.0-SHA256SUMS.txt
 
       - name: Upload VS Code extension
         uses: actions/upload-artifact@v4
         with:
           name: KeyER-VSCode-extension
-          path: artifacts/KeyER-VSCode-0.9.0.vsix
+          path: artifacts/KeyER-VSCode-1.0.0.vsix
 
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
           name: KeyER-portable-win-x64
-          path: artifacts/KeyER-v0.9.0-portable-win-x64.zip
+          path: artifacts/KeyER-v1.0.0-portable-win-x64.zip
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: KeyER-installer-win-x64
-          path: artifacts/installer/KeyER-v0.9.0-Setup.exe
+          path: artifacts/installer/KeyER-v1.0.0-Setup.exe

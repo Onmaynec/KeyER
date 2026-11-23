@@ -309,37 +309,52 @@ public sealed class AppSettings
     }
 }
 
+internal enum SettingsLoadOrigin { Defaults, Primary, Backup }
+
+internal sealed record SettingsLoadResult(AppSettings Settings, SettingsLoadOrigin Origin,
+    bool HasUnreadableFiles);
+
 public static class SettingsStore
 {
     public static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "KeyER", "settings.json");
 
-    private static string BackupPath => SettingsPath + ".bak";
+    private const long MaximumSettingsBytes = 4_194_304;
 
     public static AppSettings Load()
     {
-        if (!File.Exists(SettingsPath) && !File.Exists(BackupPath))
-            return new AppSettings();
-
-        var original = ReadValid(SettingsPath);
-        if (original is not null) return original;
-
-        var backup = ReadValid(BackupPath);
-        if (backup is not null)
+        var result = LoadFromPath(SettingsPath);
+        if (result.Origin == SettingsLoadOrigin.Backup)
         {
             MessageBox.Show(
                 "Основной файл настроек повреждён или недоступен.\n" +
-                "Загружена последняя резервная копия. Сохраните настройки для восстановления.",
+                "Загружена последняя резервная копия. При сохранении старая копия " +
+                "не будет заменена повреждёнными данными.",
                 "KeyER — восстановление", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return backup;
         }
+        else if (result.Origin == SettingsLoadOrigin.Defaults && result.HasUnreadableFiles)
+        {
+            MessageBox.Show(
+                "Не удалось прочитать настройки KeyER. Загружены стандартные значения.\n" +
+                "При сохранении повреждённый файл будет скопирован для восстановления.",
+                "KeyER — настройки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        return result.Settings;
+    }
 
-        MessageBox.Show(
-            "Не удалось прочитать настройки KeyER. Загружены стандартные значения.\n" +
-            "Повреждённый файл не удалён.",
-            "KeyER — настройки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        return new AppSettings();
+    internal static SettingsLoadResult LoadFromPath(string path)
+    {
+        var original = ReadValid(path);
+        if (original is not null)
+            return new SettingsLoadResult(original, SettingsLoadOrigin.Primary, false);
+
+        var backup = ReadValid(path + ".bak");
+        if (backup is not null)
+            return new SettingsLoadResult(backup, SettingsLoadOrigin.Backup, File.Exists(path));
+
+        var unreadable = File.Exists(path) || File.Exists(path + ".bak");
+        return new SettingsLoadResult(new AppSettings(), SettingsLoadOrigin.Defaults, unreadable);
     }
 
     private static AppSettings? ReadValid(string path)
@@ -347,34 +362,69 @@ public static class SettingsStore
         if (!File.Exists(path)) return null;
         try
         {
+            var info = new FileInfo(path);
+            if (info.Length <= 0 || info.Length > MaximumSettingsBytes)
+                return null;
+
             var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path));
             if (settings is null) return null;
             settings.Validate();
             return settings;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
-                                   or ArgumentException or NotSupportedException)
+                                   or ArgumentException or NotSupportedException
+                                   or System.Security.SecurityException)
         {
             DiagnosticLog.Error("settings-load", ex);
             return null;
         }
     }
 
-    public static void Save(AppSettings settings)
+    public static void Save(AppSettings settings) => SaveToPath(SettingsPath, settings);
+
+    /// <summary>
+    /// Atomic settings commit with a good last-known backup. A corrupt primary
+    /// is first archived, never allowed to overwrite a healthy .bak.
+    /// Tests use a temporary directory without writing into the user's profile.
+    /// </summary>
+    internal static void SaveToPath(string path, AppSettings settings)
     {
         settings.Validate();
-        Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-
-        var temporaryPath = SettingsPath + ".tmp";
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(settings,
-                new JsonSerializerOptions { WriteIndented = true }));
-            // File.Replace is atomic on NTFS and retains the previous settings as a backup.
-            if (File.Exists(SettingsPath))
-                File.Replace(temporaryPath, SettingsPath, BackupPath, ignoreMetadataErrors: true);
-            else
-                File.Move(temporaryPath, SettingsPath);
+            using (var stream = new FileStream(temporary, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false)))
+            {
+                writer.Write(JsonSerializer.Serialize(settings,
+                    new JsonSerializerOptions { WriteIndented = true }));
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            if (!File.Exists(path))
+            {
+                File.Move(temporary, path);
+                return;
+            }
+
+            if (ReadValid(path) is not null)
+            {
+                // Only a valid primary may become the next fallback backup.
+                File.Replace(temporary, path, path + ".bak", ignoreMetadataErrors: true);
+                return;
+            }
+
+            // Preserve the original unreadable file for user recovery without
+            // poisoning a previously valid backup. Do not log or export it.
+            var archive = path + ".corrupt-" +
+                DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" +
+                Guid.NewGuid().ToString("N")[..8];
+            File.Copy(path, archive, overwrite: false);
+            File.Replace(temporary, path, destinationBackupFileName: null,
+                ignoreMetadataErrors: true);
         }
         catch (Exception ex)
         {
@@ -383,40 +433,9 @@ public static class SettingsStore
         }
         finally
         {
-            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
-            catch (IOException) { /* Best-effort cleanup. */ }
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { /* Preserve the original error. */ }
+            catch (UnauthorizedAccessException) { /* Best effort cleanup. */ }
         }
-    }
-}
-
-public static class LanguageDetector
-{
-    public static string Detect(string filename, string source)
-    {
-        var ext = Path.GetExtension(filename ?? "").ToLowerInvariant();
-        var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            [".cs"] = "C#", [".py"] = "Python", [".cpp"] = "C++", [".cc"] = "C++",
-            [".c"] = "C", [".h"] = "C/C++", [".hpp"] = "C++", [".js"] = "JavaScript",
-            [".jsx"] = "JavaScript", [".ts"] = "TypeScript", [".tsx"] = "TypeScript",
-            [".java"] = "Java", [".go"] = "Go", [".rs"] = "Rust",
-            [".html"] = "HTML", [".htm"] = "HTML", [".css"] = "CSS",
-            [".json"] = "JSON", [".xml"] = "XML", [".sql"] = "SQL",
-            [".ps1"] = "PowerShell", [".sh"] = "Shell", [".rb"] = "Ruby",
-            [".php"] = "PHP", [".kt"] = "Kotlin", [".swift"] = "Swift"
-        };
-        if (known.TryGetValue(ext, out var language)) return language;
-        var sample = source.Length > 12000 ? source[..12000] : source;
-        if (sample.Contains("#include", StringComparison.Ordinal)) return "C/C++";
-        if (sample.Contains("using System;", StringComparison.Ordinal) ||
-            sample.Contains("namespace ", StringComparison.Ordinal) && sample.Contains("class ", StringComparison.Ordinal)) return "C#";
-        if (sample.Contains("def ", StringComparison.Ordinal) && sample.Contains(":", StringComparison.Ordinal)) return "Python";
-        if (sample.Contains("console.log(", StringComparison.Ordinal) ||
-            sample.Contains("function ", StringComparison.Ordinal)) return "JavaScript";
-        if (sample.Contains("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) ||
-            sample.Contains("<html", StringComparison.OrdinalIgnoreCase)) return "HTML";
-        if (sample.Contains("SELECT ", StringComparison.OrdinalIgnoreCase) &&
-            sample.Contains(" FROM ", StringComparison.OrdinalIgnoreCase)) return "SQL";
-        return "Авто";
     }
 }
