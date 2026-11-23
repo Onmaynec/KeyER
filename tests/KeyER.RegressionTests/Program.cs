@@ -134,6 +134,25 @@ internal static class Program
                 }
 
 
+                // Real WinForms capture of distraction-free editing. The
+                // Start/Pause/Stop controls stay visible in focus mode.
+                var focus = Descendants(main).OfType<StudioButton>()
+                    .FirstOrDefault(b => b.Text.Contains("Фокус F11", StringComparison.Ordinal));
+                Assert(focus is not null, "F11 editor focus control must exist.");
+                focus!.PerformClick();
+                Application.DoEvents();
+                main.Refresh();
+                Application.DoEvents();
+                using (var focused = new Bitmap(main.Width, main.Height))
+                {
+                    main.DrawToBitmap(focused, new Rectangle(Point.Empty, focused.Size));
+                    focused.Save(Path.Combine(directory, "KeyER-Studio-Editor-Focus.png"));
+                }
+                var exitFocus = Descendants(main).OfType<StudioButton>()
+                    .FirstOrDefault(b => b.Text.Contains("Панель F11", StringComparison.Ordinal));
+                exitFocus?.PerformClick();
+                Application.DoEvents();
+
                 using var settings = new SettingsForm(new AppSettings())
                 {
                     StartPosition = FormStartPosition.Manual,
