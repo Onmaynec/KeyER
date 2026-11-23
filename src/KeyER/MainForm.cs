@@ -126,7 +126,7 @@ public sealed partial class MainForm : Form
         {
             Text = "K", AutoSize = false, Width = 43, Height = 43,
             Left = 0, Top = 3, TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = Theme.AccentFill, ForeColor = Color.White,
+            BackColor = Theme.AccentFill, ForeColor = Theme.AccentText,
             Font = Theme.UiFont(22F, FontStyle.Bold), Tag = "logo"
         };
         var wordmark = Theme.Label("KeyER", 20F, true);
@@ -383,7 +383,7 @@ public sealed partial class MainForm : Form
         {
             Text = "Сохранить", Width = 91, Height = 36, Tone = ButtonTone.Soft
         };
-        _saveSource.Click += (_, _) => SaveSourceAs();
+        _saveSource.Click += (_, _) => SaveCurrentSource();
         pasteButton.Click += (_, _) => PasteIntoEditor();
         openButton.Click += (_, _) => OpenFile();
         clearButton.Click += (_, _) => ClearSource();
@@ -519,6 +519,14 @@ public sealed partial class MainForm : Form
             if (!_importing) _modified = true;
             if (_editor.TextLength > 0) _editingBlank = true;
             RefreshEmptyState();
+            // An old stopped session must not display 17.8% progress on
+            // an empty or newly edited source. Keep the optional old report.
+            if (!_engine.IsRunning && !_countingDown && !_ideBusy &&
+                _progress is not null && _progress.Value != 0)
+            {
+                ResetSourceProgress();
+                SetStatus("Исходник изменён. Готов к новому запуску.");
+            }
             _statsTimer.Stop();
             _statsTimer.Start();
             _syntaxPainter!.Schedule();
@@ -778,7 +786,8 @@ public sealed partial class MainForm : Form
             "Через три секунды проверить выбранное окно, его состояние и совместимость по правам доступа.");
         _tips.SetToolTip(_sessionReportButton,
             "Итог последней попытки без текста, имён файлов и заголовка целевого окна");
-        _tips.SetToolTip(_saveSource, "Сохранить в отдельный файл (Ctrl+S или Ctrl+Shift+S)");
+        _tips.SetToolTip(_saveSource,
+            "Ctrl+S: сохранить текущий файл. Ctrl+Shift+S: сохранить под новым именем.");
         _tips.SetToolTip(_focusToggle, "Фокус F11: скрыть боковую панель, увеличить редактор");
         _tips.SetToolTip(_wrapToggle, "Alt+Z: переносить длинные строки без изменения исходника");
         _tips.SetToolTip(_lineToggle, "Показать или скрыть номера строк");
@@ -1036,7 +1045,8 @@ public sealed partial class MainForm : Form
         var compact = _settings.CompactMode;
         _root.ColumnStyles[0].Width = _focusMode ? 0 : compact ? 191 : 231;
         _mainLayout.RowStyles[0].Height = _focusMode ? 75 : compact ? 78 : 94;
-        _mainLayout.RowStyles[2].Height = _focusMode ? 119 : compact ? 133 : 149;
+        // The persistent Start/Pause/Stop bar must stay at least 44 px tall.
+        _mainLayout.RowStyles[2].Height = 149;
         _pageTitle.Font = Theme.UiFont(compact ? 16F : 19F, FontStyle.Bold);
         _pageSubtitle.Visible = !compact && !_focusMode && _pageHeader.ClientSize.Width >= 885;
         _pageHeader.Invalidate();
