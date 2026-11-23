@@ -134,7 +134,7 @@ public sealed partial class MainForm : Form
         var version = Theme.Label("STUDIO  /  v1.1", 8F, true);
         version.Left = 57; version.Top = 35;
         version.ForeColor = Theme.Accent; version.Tag = "accent";
-        var brandCaption = Theme.Label("YOUR TYPING WORKSPACE", 8F, true);
+        var brandCaption = Theme.Label("ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО", 8F, true);
         brandCaption.ForeColor = Theme.Muted; brandCaption.Tag = "muted";
         brandCaption.Left = 0; brandCaption.Top = 78;
         brand.Controls.AddRange([logo, wordmark, version, brandCaption]);
@@ -602,6 +602,9 @@ public sealed partial class MainForm : Form
             AccessibleName = "Подготовка исходного текста"
         };
         _emptyOverlay.Click += (_, _) => BeginManualEntry();
+        _emptyOverlay.AllowDrop = true;
+        _emptyOverlay.DragEnter += FileDragEnter;
+        _emptyOverlay.DragDrop += FileDropped;
         _emptyOverlay.Controls.Add(_emptyHint);
         _emptyOverlay.Controls.Add(_emptyDescription);
         _emptyOverlay.Controls.Add(_emptyActions);
