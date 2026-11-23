@@ -131,7 +131,7 @@ public sealed partial class MainForm : Form
         };
         var wordmark = Theme.Label("KeyER", 20F, true);
         wordmark.Left = 55; wordmark.Top = 1;
-        var version = Theme.Label("STUDIO  /  v1.1", 8F, true);
+        var version = Theme.Label("STUDIO  /  v1.2", 8F, true);
         version.Left = 57; version.Top = 35;
         version.ForeColor = Theme.Accent; version.Tag = "accent";
         var brandCaption = Theme.Label("ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО", 8F, true);
