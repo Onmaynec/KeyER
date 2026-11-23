@@ -40,6 +40,12 @@ public sealed partial class TypingEngine
         public int Hesitate(char c, char previous) =>
             _motor.NextHesitation(c, previous, isCode: false);
 
+        public bool ShouldMistype(char current, char previous, int wordLength,
+            decimal percentage) =>
+            _motor.ShouldMistype(current, previous, wordLength, percentage);
+
+        public TextError NextErrorKind() => (TextError)_motor.NextErrorKind();
+
         public void OnRest(int milliseconds)
         {
             _motor.OnRest(milliseconds);
@@ -95,9 +101,9 @@ public sealed partial class TypingEngine
                 index++;
             }
             else if (pending is null && p.TypoPercent > 0 && CanTextMistype(c) &&
-                rng.NextDouble() * 100 < (double)p.TypoPercent)
+                rhythm.ShouldMistype(c, previousSource, wordLengths[index], p.TypoPercent))
             {
-                var kind = (TextError)rng.Next(4);
+                var kind = rhythm.NextErrorKind();
                 if (kind == TextError.Transpose && (index + 1 >= source.Length ||
                     !CanTextMistype(source[index + 1])))
                     kind = TextError.Substitute;
