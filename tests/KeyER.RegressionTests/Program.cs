@@ -965,9 +965,12 @@ internal static class Program
                 catch (OperationCanceledException) { rejected = true; }
                 Assert(rejected,
                     "A cancelled countdown must abort before target inspection or key injection.");
-                Assert(!Descendants(main).OfType<StudioButton>().Any(b =>
-                    b.Text.Contains("Начать", StringComparison.OrdinalIgnoreCase) && !b.Enabled),
-                    "Cancelled startup must not permanently lock the main start button.");
+                var engineField = typeof(MainForm).GetField("_engine",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                var engine = (TypingEngine?)engineField?.GetValue(main);
+                Assert(engine is not null && !engine.IsRunning,
+                    "Cancelled startup must not create a running typing session.");
             }
             catch (Exception ex) { issue = ex; }
         });
