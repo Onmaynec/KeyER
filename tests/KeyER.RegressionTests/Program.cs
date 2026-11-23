@@ -967,8 +967,8 @@ internal static class Program
             AtomicDocumentWriter.WriteText(path, "Привет\nHello 🙂");
             Assert(File.ReadAllText(path) == "Привет\nHello 🙂",
                 "Initial UTF-8 document must roundtrip.");
-            Assert(File.ReadAllBytes(path).Take(3).SequenceEqual(
-                    System.Text.Encoding.UTF8.GetBytes("При")),
+            Assert(!File.ReadAllBytes(path).Take(3)
+                    .SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }),
                 "No UTF-8 BOM should be inserted.");
 
             AtomicDocumentWriter.WriteText(path, "New content \u20ac\n");
