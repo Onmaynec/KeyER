@@ -728,14 +728,14 @@ public sealed partial class MainForm : Form
         {
             Dock = DockStyle.Fill, Tag = "surface", BackColor = Theme.Surface,
             WrapContents = false, AutoScroll = true,
-            Padding = new Padding(0, 9, 0, 1)
+            Padding = new Padding(0, 4, 0, 0)
         };
-        _start = new StudioButton { Text = "▶    Начать набор", Width = 184, Height = 44, Tone = ButtonTone.Primary };
-        _pause = new StudioButton { Text = "Ⅱ    Пауза", Width = 141, Height = 44, Tone = ButtonTone.Soft };
-        _stop = new StudioButton { Text = "■    Остановить", Width = 151, Height = 44, Tone = ButtonTone.Outline };
+        _start = new StudioButton { Text = "▶    Начать набор", Width = 184, Height = 40, Tone = ButtonTone.Primary };
+        _pause = new StudioButton { Text = "Ⅱ    Пауза", Width = 141, Height = 40, Tone = ButtonTone.Soft };
+        _stop = new StudioButton { Text = "■    Остановить", Width = 151, Height = 40, Tone = ButtonTone.Outline };
         _diagnostics = new StudioButton
         {
-            Text = "◉   Проверить окно", Width = 171, Height = 44,
+            Text = "◉   Проверить окно", Width = 171, Height = 40,
             Tone = ButtonTone.Quiet
         };
         _start.Click += async (_, _) => await StartWithCountdownAsync();
