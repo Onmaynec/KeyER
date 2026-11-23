@@ -23,6 +23,7 @@ public sealed class SettingsForm : Form
     private TextBox _settingsFind = null!;
     private Label _settingsFindStatus = null!;
     private StudioThemePreview _themePreview = null!;
+    private RichTextBox _supportText = null!;
 
     public SettingsForm(AppSettings source)
     {
@@ -80,7 +81,8 @@ public sealed class SettingsForm : Form
             ("Text", "T    Текст"),
             ("Code", "</>    Код"),
             ("Hotkeys", "⌨    Клавиши"),
-            ("Appearance", "◐    Оформление")
+            ("Appearance", "◐    Оформление"),
+            ("Diagnostics", "◇    Диагностика")
         })
         {
             var navButton = new StudioButton
@@ -343,6 +345,99 @@ public sealed class SettingsForm : Form
         paneHost.Controls.Add(appearancePane);
         _pages.Add("Appearance", appearancePane);
 
+        // Public Beta support center. The report never contains source text,
+        // settings values such as hotkeys, file names or raw exception messages.
+        var diagnosticsPane = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Theme.Surface,
+            Padding = new Padding(19, 17, 19, 13)
+        };
+        var supportHeadline = Theme.Label("Локальный отчёт о работе KeyER", 12.5F, true);
+        supportHeadline.Dock = DockStyle.Top; supportHeadline.AutoSize = false;
+        supportHeadline.Height = 38;
+
+        var supportHelp = Theme.Label(
+            "Отчёт содержит только техническую информацию и отфильтрованные записи ошибок.\n" +
+            "Исходный текст, пути файлов, содержимое окон и персональные данные не добавляются.\n" +
+            "Отправка отчёта никому не выполняется автоматически.", 9F);
+        supportHelp.Dock = DockStyle.Top; supportHelp.AutoSize = false;
+        supportHelp.Height = 83; supportHelp.ForeColor = Theme.Muted;
+        _supportText = new RichTextBox
+        {
+            Dock = DockStyle.Fill, ReadOnly = true, WordWrap = false,
+            ScrollBars = RichTextBoxScrollBars.Both,
+            DetectUrls = false, BorderStyle = BorderStyle.None,
+            BackColor = Theme.Input, ForeColor = Theme.Foreground,
+            Font = new Font("Consolas", 9.4F),
+            AccessibleName = "Локальный диагностический отчёт KeyER"
+        };
+        var supportActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom, Height = 58,
+            FlowDirection = FlowDirection.LeftToRight, WrapContents = false,
+            BackColor = Theme.Surface, Padding = new Padding(0, 8, 0, 1)
+        };
+        var refreshSupport = new StudioButton
+        {
+            Text = "Обновить", Width = 110, Height = 39, Tone = ButtonTone.Soft
+        };
+        var copySupport = new StudioButton
+        {
+            Text = "Копировать", Width = 126, Height = 39, Tone = ButtonTone.Quiet
+        };
+        var exportSupport = new StudioButton
+        {
+            Text = "Сохранить отчёт", Width = 173, Height = 39, Tone = ButtonTone.Primary
+        };
+        refreshSupport.Click += (_, _) => RefreshSupportReport();
+        copySupport.Click += (_, _) =>
+        {
+            try
+            {
+                Clipboard.SetText(_supportText.Text);
+                copySupport.Text = "Скопировано";
+            }
+            catch
+            {
+                MessageBox.Show(this, "Буфер обмена недоступен.",
+                    "KeyER Studio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        };
+        exportSupport.Click += (_, _) =>
+        {
+            using var dialog = new SaveFileDialog
+            {
+                Title = "Сохранить локальный диагностический отчёт",
+                Filter = "Текстовый отчёт (*.txt)|*.txt",
+                FileName = "KeyER-beta-diagnostics.txt",
+                DefaultExt = "txt", AddExtension = true,
+                OverwritePrompt = true, RestoreDirectory = true
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                AtomicDocumentWriter.WriteText(dialog.FileName, _supportText.Text);
+                MessageBox.Show(this, "Отчёт сохранён локально.\n" +
+                    "Никому он автоматически не отправляется.",
+                    "KeyER Studio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                or System.Security.SecurityException or ArgumentException)
+            {
+                DiagnosticLog.Error("beta-report-export", ex);
+                MessageBox.Show(this,
+                    "Не удалось записать отчёт в выбранную папку. Проверьте права доступа.",
+                    "KeyER Studio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        };
+        supportActions.Controls.AddRange([refreshSupport, copySupport, exportSupport]);
+        diagnosticsPane.Controls.Add(_supportText);
+        diagnosticsPane.Controls.Add(supportActions);
+        diagnosticsPane.Controls.Add(supportHelp);
+        diagnosticsPane.Controls.Add(supportHeadline);
+        paneHost.Controls.Add(diagnosticsPane);
+        _pages.Add("Diagnostics", diagnosticsPane);
+
         // Sticky footer outside scrollable settings body.
         var bottom = new Panel
         {
@@ -376,6 +471,17 @@ public sealed class SettingsForm : Form
         ShowCategory("Поведение");
     }
 
+    private void RefreshSupportReport()
+    {
+        if (_supportText is null || _supportText.IsDisposed) return;
+        try { _supportText.Text = BetaSupportReport.Build(_working); }
+        catch (Exception ex)
+        {
+            DiagnosticLog.Error("beta-report", ex);
+            _supportText.Text = "Не удалось подготовить локальный диагностический отчёт.";
+        }
+    }
+
     private void ShowCategory(string category)
     {
         _profileSection = category;
@@ -383,6 +489,8 @@ public sealed class SettingsForm : Form
         _pages["profiles"].Visible = profileVisible;
         _pages["Hotkeys"].Visible = category == "Hotkeys";
         _pages["Appearance"].Visible = category == "Appearance";
+        _pages["Diagnostics"].Visible = category == "Diagnostics";
+        if (category == "Diagnostics") RefreshSupportReport();
         _settingsFind.Visible = profileVisible;
         _settingsFindStatus.Visible = profileVisible;
         _settingsFind.Clear();
@@ -396,6 +504,7 @@ public sealed class SettingsForm : Form
             "Code" => ("Режим Code", "Темп программиста, подсказки, IDE и контроль корректности."),
             "Hotkeys" => ("Горячие клавиши", "Действия KeyER всегда под рукой."),
             "Appearance" => ("Оформление", "Цвета, плотность, шрифт и рабочее пространство."),
+            "Diagnostics" => ("Диагностика", "Бета-отчёт для поиска ошибок. Данные остаются у вас."),
             _ => ("Поведение", "Стиль печати, концентрация, усталость и ошибки.")
         };
         FilterProfileFields();
