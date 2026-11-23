@@ -209,7 +209,7 @@ public sealed partial class TypingEngine
         CancellationToken token, HumanMotorModel motor)
     {
         // All error types stay inside one uninterrupted word.
-        var kind = random.Next(4); // 0 replace, 1 omit, 2 double, 3 transpose
+        var kind = motor.NextErrorKind(); // 0 replace, 1 omit, 2 double, 3 transpose
         if (kind == 3 && (index + 1 >= line.Length || !CanMistype(line[index + 1])))
             kind = 0;
 
