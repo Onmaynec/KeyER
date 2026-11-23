@@ -156,3 +156,35 @@
 - Существующие регрессии Human Behavior, Text/Code и VS Code extension.
 
 **Ограничение:** тесты не могут достоверно эмулировать реальные защищённые приложения, UAC, окна пользователя и фактическую доставку SendInput. Эту матрицу необходимо прогнать на Windows ПК до обещания широкой совместимости.
+
+
+## v1.0.0 — Stable Release Acceptance
+
+### Windows CI quality gates (required)
+
+- .NET 8 build with warnings treated as errors.
+- Deterministic Text/Code/Human/IDE regressions, including existing randomized correction tests.
+- Settings recovery tests: primary + backup, corrupted primary with healthy backup, both invalid files, clean subsequent backup, archived corrupt JSON.
+- Profile migration v0.1 to current schema: custom speed, Enter behavior, selection and repeat validation without duplicates.
+- Hotkey registration transaction: unchanged keys cause no native calls; unavailable new key restores old set; duplicate rejection and shutdown cleanup.
+- Stop before engine start: canceled attempt cannot select a target or inject a character.
+- 270 additional seeded Text/Code sessions across three human styles with precise output and progress checks.
+- Real WinForms STA window construction plus **mandatory** UI preview generation.
+- VS Code extension Node smoke test, self-contained Windows publish, Inno Setup and SHA-256 manifest.
+
+### Manual Windows 10/11 sign-off
+
+1. Install v1.0 over v0.9 and verify profiles/appearance/hotkey preferences are retained.
+2. On a copy of %LOCALAPPDATA%\KeyER, corrupt settings.json with a valid backup and test recovery and saving. Confirm good .bak survives and a .corrupt-* copy appears.
+3. Configure a hotkey used by another app; ensure KeyER reports the conflict and the old three shortcuts continue to work.
+4. Start from the UI with countdown, press Stop before zero, verify that no key is sent.
+5. Start with Code + IDE verification, interrupt the preflight, and confirm that even a delayed IDE response cannot begin the typing engine.
+6. Test Pause/Stop, unexpected physical modifiers, lost foreground, and elevated target under real Windows UAC.
+7. Test file saving with UTF-8, existing file replacement, read-only directory errors, and source protection at shutdown.
+8. Inspect all Settings/Diagnostics pages with keyboard-only navigation and DPI at 100%, 125%, 150%; verify tab order and labels.
+9. Test long code/text sessions in Notepad, VS Code and Visual Studio. Verify resulting text manually or through explicitly enabled IDE verification.
+10. Re-download Setup, Portable, VSIX; compare their hashes to SHA256SUMS.txt from the **same** CI run.
+
+### What CI does not establish
+
+Automated tests cannot reliably prove that Windows delivered synthetic keystrokes to every external target, that SmartScreen accepts unsigned builds, or that the interface has no DPI/assistive technology issues on all machines. These areas require user-run Windows acceptance tests and must not be presented as already completed.
