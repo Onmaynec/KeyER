@@ -36,6 +36,9 @@ internal static class Program
             await Check("Start waits for hotkey modifiers to be released", ModifierRelease);
             await Check("Start rejects unrelated window", RejectWrongWindow);
             await Check("Settings validation handles malformed values", SettingsValidation);
+            await Check("Beta 0.9: single-instance startup guard", BetaSingleInstance);
+            await Check("Beta 0.9: atomic document saving", BetaAtomicWrite);
+            await Check("Beta 0.9: sanitized support report", BetaSupportPrivacy);
             await Check("Studio 0.7: palette and appearance validation", StudioAppearanceValidation);
             await Check("Studio 0.7: unicode-aware find, wrap and match counts", StudioSearch);
             await Check("Studio 0.7: main window/settings construction on STA", StudioUiSmoke);
@@ -143,6 +146,18 @@ internal static class Program
                 {
                     settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     bitmap.Save(Path.Combine(directory, "KeyER-Studio-Appearance.png"));
+                }
+
+                var diagnosticsTab = Descendants(settings).OfType<StudioButton>()
+                    .FirstOrDefault(b => b.Text.Contains("Диагностика", StringComparison.Ordinal));
+                diagnosticsTab?.PerformClick();
+                Application.DoEvents();
+                settings.Refresh();
+                Application.DoEvents();
+                using (var bitmap = new Bitmap(settings.Width, settings.Height))
+                {
+                    settings.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(directory, "KeyER-Studio-Beta-Diagnostics.png"));
                 }
 
                 using (var checkDialog = new TargetDiagnosticsForm(
@@ -923,6 +938,88 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task BetaSingleInstance()
+    {
+        var name = @"Local\KeyER.Beta.Regression." + Guid.NewGuid().ToString("N");
+        var first = SingleInstanceGuard.TryAcquire(name);
+        Assert(first is not null, "First instance should acquire the mutex.");
+        try
+        {
+            using var second = SingleInstanceGuard.TryAcquire(name);
+            Assert(second is null, "Second instance must not acquire the mutex.");
+        }
+        finally { first!.Dispose(); }
+
+        using var reopened = SingleInstanceGuard.TryAcquire(name);
+        Assert(reopened is not null,
+            "The same singleton slot must be available after normal shutdown.");
+        return Task.CompletedTask;
+    }
+
+    private static Task BetaAtomicWrite()
+    {
+        var directory = Path.Combine(Path.GetTempPath(),
+            "KeyER-beta-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "unicode.txt");
+            AtomicDocumentWriter.WriteText(path, "Привет\nHello 🙂");
+            Assert(File.ReadAllText(path) == "Привет\nHello 🙂",
+                "Initial UTF-8 document must roundtrip.");
+            Assert(File.ReadAllBytes(path).Take(3).SequenceEqual(
+                    System.Text.Encoding.UTF8.GetBytes("При")),
+                "No UTF-8 BOM should be inserted.");
+
+            AtomicDocumentWriter.WriteText(path, "New content \u20ac\n");
+            Assert(File.ReadAllText(path) == "New content \u20ac\n",
+                "Existing file must be atomically overwritten.");
+            Assert(!Directory.GetFiles(directory, "*.tmp").Any(),
+                "Temporary files should be cleaned after successful writes.");
+
+            var failed = false;
+            try { AtomicDocumentWriter.WriteText(directory, "must not replace directory"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { failed = true; }
+            Assert(failed, "Writing to an existing directory must fail.");
+            Assert(File.ReadAllText(path) == "New content \u20ac\n",
+                "A failed write must preserve previously saved content.");
+            Assert(!Directory.GetFiles(directory, "*.tmp").Any(),
+                "Failed write should not leave temp files behind.");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+        return Task.CompletedTask;
+    }
+
+    private static Task BetaSupportPrivacy()
+    {
+        string[] entries =
+        [
+            "2026-11-22T23:17:11.2288737+00:00 ERROR typing IOException HRESULT=0x80070057",
+            "2026-11-22T23:17:12.0000000+00:00 ERROR settings-save JsonException HRESULT=0x80131500",
+            "2026-11-22T23:17:13.0000000+00:00 ERROR typing /Users/secret/password=123",
+            "user sensitive source code",
+            "2026-11-22T23:17:14.0000000+00:00 ERROR component SomeException HRESULT=0x80004005\nSECRET"
+        ];
+        var filtered = BetaSupportReport.FilterLogEntries(entries);
+        Assert(filtered.Count == 2, "Only strictly formatted log entries can be exported.");
+        Assert(filtered.All(x => !x.Contains("secret", StringComparison.OrdinalIgnoreCase)),
+            "Sanitized log entries must exclude fake private content.");
+        Assert(BetaSupportReport.FilterLogEntries(entries, 1).Count == 1,
+            "Log export should honor its bounded size.");
+        var settings = new AppSettings();
+        settings.Validate();
+        var report = BetaSupportReport.Build(settings, entries);
+        Assert(report.Contains("Public Beta"), "Report has beta identity.");
+        Assert(report.Contains("IOException") && report.Contains("JsonException"),
+            "Report preserves safe failure categories.");
+        Assert(!report.Contains("password") && !report.Contains("sensitive source"),
+            "No user content can be copied into a support report.");
+        Assert(!report.Contains(Environment.UserName, StringComparison.OrdinalIgnoreCase),
+            "Do not export the Windows account name.");
+        return Task.CompletedTask;
+    }
+
     private static Task StudioAppearanceValidation()
     {
         Theme.Configure(AppearanceMode.Dark, AccentTheme.Iris);
@@ -1041,6 +1138,9 @@ internal static class Program
                     "Editable profile parameters must remain available.");
                 Assert(Descendants(settings).OfType<StudioThemePreview>().Count() == 1,
                     "Live theme preview must exist.");
+                Assert(Descendants(settings).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Диагностика", StringComparison.Ordinal)),
+                    "Beta support center must be discoverable.");
                 Assert(Descendants(settings).OfType<TextBox>().Any(t =>
                     t.PlaceholderText.Contains("Поиск параметра", StringComparison.Ordinal)),
                     "Settings search must be discoverable.");
