@@ -110,6 +110,8 @@ internal sealed class HumanMotorModel
         if (_burst) factor *= 1.0 - 0.22 * (0.4 + strength * 0.6);
         if (previous == ' ' && char.IsLetter(current))
             factor *= 1.0 + 0.065 * strength; // opening a fresh word
+        if (_charsSinceRest < 3)
+            factor *= 1.0 + (3 - _charsSinceRest) * 0.035 * strength;
         if (char.IsUpper(current) && !char.IsUpper(previous))
             factor *= 1.0 + 0.115 * strength;
         _charsSinceRest++;
@@ -158,6 +160,41 @@ internal sealed class HumanMotorModel
             Math.Pow(-Math.Log(Math.Max(1e-9, 1 - _random.NextDouble())), 0.9);
         return Math.Clamp((int)Math.Round(duration * (0.7 + strength * 0.65)),
             45, 850);
+    }
+
+    /// <summary>
+    /// Imperfections cluster in difficult passages instead of arriving at a
+    /// fixed global rate per keystroke. The supplied typo percentage remains
+    /// the baseline, and zero always disables deliberate mistakes.
+    /// </summary>
+    public bool ShouldMistype(char current, char previous, int wordLength,
+        decimal basePercent)
+    {
+        if (basePercent <= 0) return false;
+        var strength = _p.HumanizerStrength / 100.0;
+        var difficulty = TransitionFactor(previous, current, _p.KeyTravelInfluence);
+        var complexity = 1.0 + (difficulty - 1) * 1.3 * strength;
+        if (char.IsUpper(current) && !char.IsUpper(previous))
+            complexity += 0.18 * strength;
+        if (wordLength >= 9) complexity += 0.16 * strength;
+        if (_burst) complexity += 0.11 * strength;
+        if (char.IsLetter(current) && char.IsLetter(previous) &&
+            FamiliarPairs.Contains(string.Concat(previous, current)))
+            complexity -= 0.18 * strength;
+        complexity *= 1.0 + Math.Min(0.35, _charsSinceRest / 700.0 * 0.35) * strength;
+        var chance = Math.Clamp((double)basePercent * complexity, 0.0, 40.0);
+        return _random.NextDouble() * 100.0 < chance;
+    }
+
+    /// <summary>
+    /// Weighted typo categories: physical substitution and omission happen
+    /// more often than a two-character swap; 0=substitute, 1=omit,
+    /// 2=duplicate, 3=transpose.
+    /// </summary>
+    public int NextErrorKind()
+    {
+        var roll = _random.Next(100);
+        return roll < 49 ? 0 : roll < 73 ? 1 : roll < 89 ? 2 : 3;
     }
 
     public void OnRest(int milliseconds)
