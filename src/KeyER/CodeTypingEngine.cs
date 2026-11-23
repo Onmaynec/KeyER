@@ -67,7 +67,8 @@ public sealed partial class TypingEngine
                     // syntax, indentation, literal or comment is deliberately corrupted.
                     if (profile.TypoPercent > 0 &&
                         part.Kind is CodeAnalyzer.TokenKind.Identifier or CodeAnalyzer.TokenKind.Keyword &&
-                        CanMistype(c) && random.NextDouble() * 100 < (double)profile.TypoPercent)
+                        CanMistype(c) && motor.ShouldMistype(c, previousSource,
+                            part.Text.Length, profile.TypoPercent))
                     {
                         // Pass token-local text: delayed corrections cannot escape
                         // into another token or cross punctuation.
