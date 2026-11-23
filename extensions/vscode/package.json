@@ -2,7 +2,7 @@
   "name": "keyer-ide-bridge",
   "displayName": "KeyER — IDE Integration",
   "description": "Local same-user bridge for verifying keyboard-simulated Code typing in VS Code.",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "publisher": "onmaynec",
   "license": "UNLICENSED",
   "private": true,
