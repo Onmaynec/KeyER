@@ -145,9 +145,12 @@ internal static class Theme
         if (sender is not ComboBox combo || e.Index < 0 ||
             e.Index >= combo.Items.Count) return;
 
-        var selected = (e.State & DrawItemState.Selected) != 0;
-        var background = selected ? (IsLight ? AccentFill : Color.White) : SurfaceRaised;
-        var foreground = selected ? AccentText : Foreground;
+        // Collapsed field uses the dark surface; only a selected *popup row*
+        // receives the white/black high-contrast treatment.
+        var popupSelected = (e.State & DrawItemState.Selected) != 0 &&
+            (e.State & DrawItemState.ComboBoxEdit) == 0;
+        var background = popupSelected ? (IsLight ? AccentFill : Color.White) : SurfaceRaised;
+        var foreground = popupSelected ? AccentText : Foreground;
         using var shade = new SolidBrush(background);
         e.Graphics.FillRectangle(shade, e.Bounds);
         var text = Convert.ToString(combo.Items[e.Index]) ?? "";
@@ -156,7 +159,7 @@ internal static class Theme
         TextRenderer.DrawText(e.Graphics, text, combo.Font, rect, foreground,
             TextFormatFlags.VerticalCenter | TextFormatFlags.Left |
             TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
-        if ((e.State & DrawItemState.Focus) != 0 && selected)
+        if ((e.State & DrawItemState.Focus) != 0 && popupSelected)
         {
             using var pen = new Pen(IsLight ? Color.FromArgb(255, 255, 255) :
                 Color.FromArgb(40, 40, 40));
