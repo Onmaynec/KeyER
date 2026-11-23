@@ -72,6 +72,8 @@ public sealed partial class MainForm : Form
     private bool _modified;
     private bool _caseSensitive;
 
+    private HotkeyRegistrationCoordinator? _hotkeyCoordinator;
+
     private bool _registering;
     private bool _countingDown;
     private bool _importing;
@@ -1153,7 +1155,7 @@ public sealed partial class MainForm : Form
         if (!RegisterHotkeys(showWarnings: false))
         {
             _settings = previous;
-            RegisterHotkeys(showWarnings: false);
+            // Transactional registrar already restored the prior set if possible.
             MessageBox.Show(this, "Не удалось зарегистрировать одну из комбинаций. Возможно, она уже используется другой программой. Настройки не изменены.",
                 "KeyER — горячие клавиши", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -1410,21 +1412,26 @@ public sealed partial class MainForm : Form
 
     private void UnregisterHotkeys()
     {
-        if (!IsHandleCreated) return;
-        for (var id = 1; id <= 3; id++) Native.UnregisterHotKey(Handle, id);
+        _hotkeyCoordinator?.Dispose();
+        _hotkeyCoordinator = null;
     }
 
     private bool RegisterHotkeys(bool showWarnings)
     {
-        UnregisterHotkeys();
-        var ok = Native.TryRegisterHotkey(Handle, 1, _settings.StartHotkey) &&
-                 Native.TryRegisterHotkey(Handle, 2, _settings.PauseHotkey) &&
-                 Native.TryRegisterHotkey(Handle, 3, _settings.StopHotkey);
-        if (ok) return true;
-        UnregisterHotkeys();
+        if (!IsHandleCreated) return false;
+        _hotkeyCoordinator ??= new HotkeyRegistrationCoordinator(
+            new Win32HotkeyRegistrationBackend(), Handle);
+        var registered = _hotkeyCoordinator.TryApply(
+            _settings.StartHotkey, _settings.PauseHotkey, _settings.StopHotkey);
+        if (registered) return true;
         if (showWarnings)
-            MessageBox.Show(this, "Не удалось зарегистрировать глобальные клавиши. Измените их в настройках.",
-                "KeyER", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this,
+                "Не удалось зарегистрировать одну из глобальных комбинаций.\n" +
+                "Проверьте, что они не используются другой программой, затем откройте настройки.\n" +
+                (_hotkeyCoordinator.HasActiveSet
+                    ? "Предыдущие работающие сочетания восстановлены."
+                    : "Регистрация сочетаний не выполнена."),
+                "KeyER — горячие клавиши", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         return false;
     }
 
