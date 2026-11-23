@@ -51,6 +51,8 @@ internal static class Program
             await Check("Editor 1.2: stable syntax coloring without repaints or scrolling", EditorSyntaxStability);
             await Check("Editor 1.2: focus mode, code scrolling and line wrap", EditorFocusAndWrap);
             await Check("Editor 1.2: Ctrl+S direct save of opened documents", EditorSaveCurrent);
+            await Check("Editor 1.2: monochrome dropdown contrast in both states", EditorDropdownPalette);
+            await Check("Editor 1.2: run bar has no vertical overflow scrollbar", EditorRunBarLayout);
             await Check("IDE 0.4: same-user pipe roundtrip and session invalidation", IdePipeRoundTrip);
             await Check("IDE 0.4: verified mode remains opt-in", IdeSettingsSafety);
             await Check("Human 0.5: style presets and settings migration", HumanStylePresets);
@@ -1520,6 +1522,90 @@ internal static class Program
             "No user content can be copied into a support report.");
         Assert(!report.Contains(Environment.UserName, StringComparison.OrdinalIgnoreCase),
             "Do not export the Windows account name.");
+        return Task.CompletedTask;
+    }
+
+    private static Task EditorDropdownPalette()
+    {
+        Theme.Configure(AppearanceMode.Dark, AccentTheme.Iris);
+        using var picker = new ComboBox { Width = 200, Height = 35 };
+        Theme.StyleCombo(picker);
+        picker.Items.Add("Естественный ритм");
+        Assert(picker.DrawMode == DrawMode.OwnerDrawFixed &&
+               picker.ItemHeight >= 26 && picker.DropDownStyle == ComboBoxStyle.DropDownList,
+            "Dropdowns must use accessible owner drawing with comfortable row height.");
+        var method = typeof(Theme).GetMethod("DrawStudioComboItem",
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Static);
+        Assert(method is not null, "Themed dropdown item painter must exist.");
+        using var bitmap = new Bitmap(200, 40);
+        using var graphics = Graphics.FromImage(bitmap);
+        var bounds = new Rectangle(0, 0, 200, 40);
+        var active = new DrawItemEventArgs(graphics, picker.Font, bounds,
+            0, DrawItemState.Selected);
+        method!.Invoke(null, [picker, active]);
+        Assert(bitmap.GetPixel(3, 3) == Color.White,
+            "Expanded dark dropdown selection should use a white highlight.");
+
+        var collapsed = new DrawItemEventArgs(graphics, picker.Font, bounds, 0,
+            DrawItemState.Selected | DrawItemState.ComboBoxEdit);
+        method.Invoke(null, [picker, collapsed]);
+        Assert(bitmap.GetPixel(3, 3) == Theme.SurfaceRaised,
+            "Closed dark dropdown must stay near-black, not a large white rectangle.");
+
+        Theme.Configure(AppearanceMode.Light, AccentTheme.Iris);
+        method.Invoke(null, [picker, active]);
+        Assert(bitmap.GetPixel(3, 3) == Theme.AccentFill,
+            "Light dropdown continues using the original colored accent.");
+        Theme.Configure(AppearanceMode.Dark, AccentTheme.Iris);
+        return Task.CompletedTask;
+    }
+
+    private static Task EditorRunBarLayout()
+    {
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            var previous = Environment.GetEnvironmentVariable("KEYER_UI_PREVIEW");
+            try
+            {
+                Environment.SetEnvironmentVariable("KEYER_UI_PREVIEW", "1");
+                using var main = new MainForm
+                {
+                    Size = new Size(1170, 760),
+                    StartPosition = FormStartPosition.Manual,
+                    Location = new Point(25, 25)
+                };
+                main.Show();
+                Application.DoEvents();
+                var actions = Descendants(main).OfType<FlowLayoutPanel>()
+                    .FirstOrDefault(p => p.Controls.OfType<StudioButton>().Any(
+                        b => b.Text.Contains("Начать набор", StringComparison.Ordinal)));
+                Assert(actions is not null, "Persistent run command bar exists.");
+                Assert(!actions!.VerticalScroll.Visible,
+                    "Run bar must not show a native white vertical scrollbar in Dark mode.");
+                var stop = actions.Controls.OfType<StudioButton>().FirstOrDefault(
+                    b => b.Text.Contains("Остановить", StringComparison.Ordinal));
+                Assert(stop is not null && stop.Visible,
+                    "Stop button must stay accessible in normal workspace.");
+                var focus = Descendants(main).OfType<StudioButton>().First(
+                    b => b.Text.Contains("Фокус F11", StringComparison.Ordinal));
+                focus.PerformClick();
+                Application.DoEvents();
+                Assert(!actions.VerticalScroll.Visible,
+                    "Run bar must remain unclipped after entering focus mode.");
+                Assert(stop.Visible, "Stop stays visible in F11 mode.");
+                main.Close();
+            }
+            catch (Exception ex) { error = ex; }
+            finally { Environment.SetEnvironmentVariable("KEYER_UI_PREVIEW", previous); }
+        });
+        thread.IsBackground = true;
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(15)))
+            throw new Exception("Editor run-bar layout test timed out.");
+        if (error is not null) throw new Exception("Editor run-bar layout failure.", error);
         return Task.CompletedTask;
     }
 
