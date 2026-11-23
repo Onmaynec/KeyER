@@ -1288,7 +1288,7 @@ internal static class Program
         var settings = new AppSettings();
         settings.Validate();
         var report = BetaSupportReport.Build(settings, entries);
-        Assert(report.Contains("Public Beta"), "Report has beta identity.");
+        Assert(report.Contains("support report"), "Report has support identity.");
         Assert(report.Contains("IOException") && report.Contains("JsonException"),
             "Report preserves safe failure categories.");
         Assert(!report.Contains("password") && !report.Contains("sensitive source"),
