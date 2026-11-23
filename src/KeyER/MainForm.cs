@@ -1220,7 +1220,7 @@ public sealed partial class MainForm : Form
                 await Task.Delay(1000, _countdownCts.Token);
             }
             _countdownCts.Token.ThrowIfCancellationRequested();
-            await StartNowAsync(Native.GetForegroundWindow());
+            await StartNowAsync(Native.GetForegroundWindow(), _countdownCts.Token);
         }
         catch (OperationCanceledException) { SetStatus("Запуск отменён."); }
         finally
@@ -1232,8 +1232,9 @@ public sealed partial class MainForm : Form
         }
     }
 
-    private async Task StartNowAsync(IntPtr target)
+    private async Task StartNowAsync(IntPtr target, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_engine.IsRunning || _ideBusy || _checkingTarget) return;
         if (string.IsNullOrEmpty(_editor.Text))
         {
@@ -1305,6 +1306,11 @@ public sealed partial class MainForm : Form
                 }
             }
 
+            // Stop can arrive while an IDE preflight is awaiting a reply.
+            // Recheck both cancellation sources at the final hand-off: once
+            // keyboard input begins it must never revive a cancelled attempt.
+            cancellationToken.ThrowIfCancellationRequested();
+            _idePreflight.Token.ThrowIfCancellationRequested();
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var activeTask = _engine.StartAsync(snapshot, _settings.Mode, profile, target,
                 _settings.SourceFileName, _settings.CodeLanguage);
