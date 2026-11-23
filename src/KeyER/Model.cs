@@ -66,6 +66,13 @@ public sealed class TypingProfile
     public int LookbackPercent { get; set; } = 2;
     public int LookbackMaxCharacters { get; set; } = 5;
 
+    // Humanizer 3.0: motor rhythm shared between Text and Code, with
+    // correlated timing and bounded context-dependent hesitation.
+    public int HumanizerStrength { get; set; } = 80;
+    public int KeyTravelInfluence { get; set; } = 72;
+    public int RhythmMemoryPercent { get; set; } = 72;
+    public int MicroHesitationPercent { get; set; } = 10;
+
     // Code Intelligence v0.3: separate syntax-aware timing and review.
     public int CodeLinePauseMilliseconds { get; set; } = 90;
     public int CodeFunctionPauseMilliseconds { get; set; } = 520;
@@ -88,7 +95,10 @@ public sealed class TypingProfile
                 FocusMinCharacters = 15; FocusMaxCharacters = 50;
                 FocusRecoveryPercent = 36; AttentionBreakPercent = 90;
                 ThinkingPausePercent = 24; LookbackPercent = 12;
-                CodeReviewPercent = 12; break;
+                CodeReviewPercent = 12;
+                HumanizerStrength = 95; KeyTravelInfluence = 90;
+                RhythmMemoryPercent = 50; MicroHesitationPercent = 20;
+                break;
             case HumanStyle.Casual:
                 CharactersPerMinute = 255; SpeedVariationPercent = 30;
                 TypoPercent = 2.8m; LateCorrectionPercent = 45;
@@ -96,7 +106,10 @@ public sealed class TypingProfile
                 FocusMinCharacters = 35; FocusMaxCharacters = 100;
                 FocusRecoveryPercent = 22; AttentionBreakPercent = 65;
                 ThinkingPausePercent = 10; LookbackPercent = 4;
-                CodeReviewPercent = 3; break;
+                CodeReviewPercent = 3;
+                HumanizerStrength = 85; KeyTravelInfluence = 73;
+                RhythmMemoryPercent = 72; MicroHesitationPercent = 10;
+                break;
             case HumanStyle.Developer:
                 CharactersPerMinute = 335; SpeedVariationPercent = 22;
                 TypoPercent = 1.5m; LateCorrectionPercent = 55;
@@ -104,7 +117,10 @@ public sealed class TypingProfile
                 FocusMinCharacters = 60; FocusMaxCharacters = 150;
                 FocusRecoveryPercent = 25; AttentionBreakPercent = 55;
                 ThinkingPausePercent = 14; LookbackPercent = 5;
-                CodeReviewPercent = 10; break;
+                CodeReviewPercent = 10;
+                HumanizerStrength = 82; KeyTravelInfluence = 70;
+                RhythmMemoryPercent = 79; MicroHesitationPercent = 13;
+                break;
             case HumanStyle.Professional:
                 CharactersPerMinute = 465; SpeedVariationPercent = 12;
                 TypoPercent = 0.6m; LateCorrectionPercent = 65;
@@ -112,7 +128,10 @@ public sealed class TypingProfile
                 FocusMinCharacters = 95; FocusMaxCharacters = 220;
                 FocusRecoveryPercent = 16; AttentionBreakPercent = 30;
                 ThinkingPausePercent = 4; LookbackPercent = 1;
-                CodeReviewPercent = 2; break;
+                CodeReviewPercent = 2;
+                HumanizerStrength = 70; KeyTravelInfluence = 64;
+                RhythmMemoryPercent = 88; MicroHesitationPercent = 5;
+                break;
             case HumanStyle.Custom: break; // retaining all existing parameters
         }
         Validate();
@@ -167,6 +186,10 @@ public sealed class TypingProfile
         ThinkingPauseMaxMilliseconds = Math.Clamp(ThinkingPauseMaxMilliseconds, ThinkingPauseMinMilliseconds, 30000);
         LookbackPercent = Math.Clamp(LookbackPercent, 0, 30);
         LookbackMaxCharacters = Math.Clamp(LookbackMaxCharacters, 1, 12);
+        HumanizerStrength = Math.Clamp(HumanizerStrength, 0, 100);
+        KeyTravelInfluence = Math.Clamp(KeyTravelInfluence, 0, 100);
+        RhythmMemoryPercent = Math.Clamp(RhythmMemoryPercent, 0, 96);
+        MicroHesitationPercent = Math.Clamp(MicroHesitationPercent, 0, 35);
         CodeLinePauseMilliseconds = Math.Clamp(CodeLinePauseMilliseconds, 0, 5000);
         CodeFunctionPauseMilliseconds = Math.Clamp(CodeFunctionPauseMilliseconds, 0, 10000);
         CodeBlockPauseMilliseconds = Math.Clamp(CodeBlockPauseMilliseconds, 0, 10000);
@@ -219,8 +242,23 @@ public sealed class AppSettings
         MakeStylePreset("Beginner", HumanStyle.Beginner),
         MakeStylePreset("Casual", HumanStyle.Casual),
         MakeStylePreset("Developer", HumanStyle.Developer),
-        MakeStylePreset("Professional", HumanStyle.Professional)
+        MakeStylePreset("Professional", HumanStyle.Professional),
+        NaturalPreset()
     ];
+
+    public static TypingProfile NaturalPreset()
+    {
+        var profile = MakeStylePreset("Естественный ритм", HumanStyle.Casual);
+        profile.HumanizerStrength = 93;
+        profile.KeyTravelInfluence = 85;
+        profile.RhythmMemoryPercent = 83;
+        profile.MicroHesitationPercent = 15;
+        profile.TypoPercent = 2.2m;
+        profile.LookbackPercent = 4;
+        profile.AttentionBreakPercent = 58;
+        profile.Validate();
+        return profile;
+    }
 
     public static TypingProfile MakeStylePreset(string name, HumanStyle style)
     {
@@ -266,6 +304,15 @@ public sealed class AppSettings
                 }
             }
             SettingsSchemaVersion = 3;
+        }
+        if (SettingsSchemaVersion < 4)
+        {
+            // New attributes get their class initializer defaults when absent
+            // from old JSON. Never reset user-modified values or style choices.
+            if (Profiles.All(p => !string.Equals(p.Name, "Естественный ритм",
+                StringComparison.OrdinalIgnoreCase)))
+                Profiles.Add(NaturalPreset());
+            SettingsSchemaVersion = 4;
         }
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var profile in Profiles)

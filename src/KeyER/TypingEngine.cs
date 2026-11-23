@@ -206,10 +206,10 @@ public sealed partial class TypingEngine
 
     private async Task<int> MistypeAndCorrectAsync(string line, int index, int done,
         TypingProfile profile, TypingMode mode, IntPtr target, Random random, bool burst,
-        CancellationToken token)
+        CancellationToken token, HumanMotorModel motor)
     {
         // All error types stay inside one uninterrupted word.
-        var kind = random.Next(4); // 0 replace, 1 omit, 2 double, 3 transpose
+        var kind = motor.NextErrorKind(); // 0 replace, 1 omit, 2 double, 3 transpose
         if (kind == 3 && (index + 1 >= line.Length || !CanMistype(line[index + 1])))
             kind = 0;
 
@@ -230,23 +230,23 @@ public sealed partial class TypingEngine
                 break; // omitted original character
             case 2:
                 await CharacterAsync(line[index], target, token);
-                await DelayAsync(line[index], done, profile, mode, random, burst, token);
+                await DelayAsync(line[index], done, profile, mode, random, burst, token, motor);
                 await CharacterAsync(line[index], target, token);
                 break;
             case 3:
                 await CharacterAsync(line[index + 1], target, token);
-                await DelayAsync(line[index + 1], done, profile, mode, random, burst, token);
+                await DelayAsync(line[index + 1], done, profile, mode, random, burst, token, motor);
                 await CharacterAsync(line[index], target, token);
                 break;
         }
 
-        await DelayAsync(line[index], done, profile, mode, random, burst, token);
+        await DelayAsync(line[index], done, profile, mode, random, burst, token, motor);
 
         for (var j = 0; j < lag; j++)
         {
             var c = line[index + consumed + j];
             await CharacterAsync(c, target, token);
-            await DelayAsync(c, done + consumed + j, profile, mode, random, burst, token);
+            await DelayAsync(c, done + consumed + j, profile, mode, random, burst, token, motor);
         }
 
         // Move from end of typed lag to the damaged segment, repair, and return.
@@ -289,22 +289,8 @@ public sealed partial class TypingEngine
     private static bool CanMistype(char c) =>
         c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= 'а' and <= 'я' or >= 'А' and <= 'Я';
 
-    private static char WrongLetter(char source, Random random)
-    {
-        string[] rows = ["qwertyuiop", "asdfghjkl", "zxcvbnm", "йцукенгшщзхъ", "фывапролджэ", "ячсмитьбю"];
-        var lower = char.ToLowerInvariant(source);
-        if (lower == 'ё') return char.IsUpper(source) ? 'Й' : 'й';
-        foreach (var row in rows)
-        {
-            var idx = row.IndexOf(lower);
-            if (idx < 0) continue;
-            var next = idx == 0 ? 1 : idx == row.Length - 1 ? idx - 1 :
-                (random.Next(2) == 0 ? idx - 1 : idx + 1);
-            var replacement = row[next];
-            return char.IsUpper(source) ? char.ToUpperInvariant(replacement) : replacement;
-        }
-        return char.IsUpper(source) ? 'X' : 'x';
-    }
+    private static char WrongLetter(char source, Random random) =>
+        HumanMotorModel.NearbyLetter(source, random);
 
     private async Task CharacterAsync(char character, IntPtr target, CancellationToken token)
     {
@@ -361,21 +347,25 @@ public sealed partial class TypingEngine
         _wait(milliseconds, token);
 
     private async Task DelayAsync(char c, int index, TypingProfile profile,
-        TypingMode mode, Random random, bool burst, CancellationToken token)
+        TypingMode mode, Random random, bool burst, CancellationToken token,
+        HumanMotorModel motor)
     {
-        var baseMs = 60000.0 / profile.CharactersPerMinute;
-        var jitter = 1.0 + (random.NextDouble() * 2 - 1) * profile.SpeedVariationPercent / 100.0;
-        var fatigue = 1.0 + Math.Min(1.0, index / 3000.0) * profile.FatiguePercent / 100.0;
-        var speed = burst ? 0.65 : 1.0;
-        var syntaxPause = mode == TypingMode.Code && c is ';' or '{' or '}' or ':'
-            ? 1.7 : 1.0;
-        var delay = Math.Clamp((int)(baseMs * jitter * fatigue * speed * syntaxPause), 12, 3000);
+        // Corrections are short, deliberate bursts with the same session
+        // motor characteristics as ordinary source characters.
+        var delay = motor.NextDelay(c, '\0', wordLength: 0,
+            contextFactor: burst ? 0.82 : 1.12);
         await PauseAsync(delay, token);
 
         if (random.NextDouble() * 100 < (double)profile.LongPausePercent)
         {
-            var ms = random.Next(profile.PauseMinMilliseconds, profile.PauseMaxMilliseconds + 1);
-            if (ms > 0) await PauseAsync(ms, token);
+            var ms = random.Next(profile.PauseMinMilliseconds,
+                profile.PauseMaxMilliseconds + 1);
+            if (ms > 0)
+            {
+                await PauseAsync(ms, token);
+                motor.OnRest(ms);
+            }
         }
     }
+
 }

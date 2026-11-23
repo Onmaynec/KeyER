@@ -53,6 +53,11 @@ internal static class Program
             await Check("Human 0.5: style presets and settings migration", HumanStylePresets);
             await Check("Human 0.5: concentration/recovery deterministic behavior", HumanFocus);
             await Check("Human 0.5: reversible lookback in Text and Code (400 runs)", HumanLookbacks);
+            await Check("Humanizer 1.1: deterministic motor timing and bounded ranges", HumanizerTiming);
+            await Check("Humanizer 1.1: bilingual keyboard adjacency and weighted mistakes", HumanizerKeyboard);
+            await Check("Humanizer 1.1: controlled pauses, errors and parameter boundaries", HumanizerContexts);
+            await Check("Humanizer 1.1: schema v4 and natural profile without custom data loss", HumanizerMigration);
+            await Check("Humanizer 1.1: precise seeded Text/Code output across profiles", HumanizerEndToEnd);
             Console.WriteLine($"PASS: {_passed} regression checks");
             return 0;
         }
@@ -763,6 +768,204 @@ internal static class Program
         Assert(device.Events == 0, "No keys may be sent to wrong foreground target.");
     }
 
+    private static Task HumanizerTiming()
+    {
+        var p = Profile(0m);
+        p.HumanizerStrength = 100;
+        p.KeyTravelInfluence = 100;
+        p.RhythmMemoryPercent = 90;
+        p.MicroHesitationPercent = 0;
+        p.SpeedVariationPercent = 80;
+        p.BurstPercent = 40;
+        p.Validate();
+
+        var one = new HumanMotorModel(p, new Random(8842));
+        var two = new HumanMotorModel(p, new Random(8842));
+        var previous = '\0';
+        const string passage = "The quick brown fox jumps over the lazy dog. Привет мир! 123";
+        var output = new List<int>();
+        foreach (var c in passage)
+        {
+            var a = one.NextDelay(c, previous, 8);
+            var b = two.NextDelay(c, previous, 8);
+            Assert(a == b, "Seeded motor model must be reproducible.");
+            Assert(a is >= 12 and <= 3500, "Every interval must be bounded.");
+            output.Add(a);
+            previous = c;
+        }
+        Assert(output.Distinct().Count() >= 14,
+            "Realistic motor model must not produce constant intervals.");
+        one.OnRest(1200);
+        two.OnRest(1200);
+        Assert(one.NextDelay('x', 'e', 4) == two.NextDelay('x', 'e', 4),
+            "Recovery from rest must be deterministic.");
+
+        var leftRight = HumanMotorModel.TransitionFactor('f', 'j', 100);
+        var neutral = HumanMotorModel.TransitionFactor('f', 'j', 0);
+        Assert(neutral == 1.0, "Zero travel sensitivity means neutral motor factor.");
+        Assert(Math.Abs(leftRight - neutral) > 0.01,
+            "Hand alternation and key distance should influence timing.");
+        Assert(HumanMotorModel.TransitionFactor('a', 'a', 100) >
+               HumanMotorModel.TransitionFactor('a', 's', 100),
+            "Repeated keys need distinct finger-reset timing.");
+        Assert(HumanMotorModel.TransitionFactor('a', 'a', 0) == 1,
+            "Physical distance effect is optional.");
+        return Task.CompletedTask;
+    }
+
+    private static Task HumanizerKeyboard()
+    {
+        foreach (var layout in new[] { "qwertyuiopasdfghjklzxcvbnm",
+                     "йцукенгшщзхъфывапролджэячсмитьбюё" })
+        {
+            for (var i = 0; i < 500; i++)
+            {
+                var c = layout[i % layout.Length];
+                var typo = HumanMotorModel.NearbyLetter(c, new Random(i * 171 + 91));
+                Assert(c != typo, "Wrong letter must differ from intended key.");
+                Assert(layout.Contains(typo),
+                    "Nearby typo must stay in the same writing system.");
+                Assert(HumanMotorModel.TryLocate(c, out var original),
+                    "Source letter must have a keyboard location.");
+                Assert(HumanMotorModel.TryLocate(typo, out var neighbor),
+                    "Nearby typo must have a keyboard location.");
+                Assert(original.Layout == neighbor.Layout, "Physical keyboard mapping.");
+                var dx = original.X - neighbor.X;
+                var dy = original.Y - neighbor.Y;
+                Assert(dx * dx + dy * dy <= 2.9,
+                    "Generated typo must be a nearby physical key.");
+            }
+        }
+        Assert(char.IsUpper(HumanMotorModel.NearbyLetter('Щ', new Random(44))),
+            "Shifted characters must preserve case.");
+        Assert(HumanMotorModel.NearbyLetter('f', new Random(3)) ==
+               HumanMotorModel.NearbyLetter('f', new Random(3)),
+            "Typo choices must be reproducible.");
+        return Task.CompletedTask;
+    }
+
+    private static Task HumanizerContexts()
+    {
+        var p = Profile(0m);
+        p.HumanizerStrength = 100;
+        p.MicroHesitationPercent = 35;
+        p.KeyTravelInfluence = 100;
+        p.RhythmMemoryPercent = 96;
+        p.Validate();
+        var motor = new HumanMotorModel(p, new Random(22));
+        Assert(motor.NextHesitation('b', 'a', false) == 0,
+            "No cognitive hesitation for ordinary familiar passage.");
+        var pauses = new List<int>();
+        for (var i = 0; i < 1000; i++)
+        {
+            var ms = motor.NextHesitation('{', 'x', true);
+            Assert(ms is >= 0 and <= 850,
+                "Context microhesitations must never block for unbounded time.");
+            if (ms > 0) pauses.Add(ms);
+        }
+        Assert(pauses.Count >= 40 && pauses.Count <= 500,
+            "Code punctuation should have infrequent, not uniform, thought pauses.");
+        Assert(pauses.Distinct().Count() > 15,
+            "Cognitive pauses must vary rather than use one fixed length.");
+
+        p.MicroHesitationPercent = 0;
+        var disabled = new HumanMotorModel(p, new Random(91));
+        for (var i = 0; i < 100; i++)
+            Assert(disabled.NextHesitation('(', 'a', true) == 0,
+                "Zero microhesitation setting must strictly disable the feature.");
+
+        var errors = new HumanMotorModel(p, new Random(25));
+        Assert(Enumerable.Range(0, 1000).All(_ =>
+            !errors.ShouldMistype('a', 'f', 8, 0m)),
+            "Zero typo percentage must always disable deliberate mistakes.");
+
+        var types = new int[4];
+        for (var i = 0; i < 2000; i++) types[errors.NextErrorKind()]++;
+        Assert(types[0] > types[1] && types[1] > types[3],
+            "Substitutions should dominate rare transpositions.");
+        Assert(types.All(x => x > 0), "All supported corrections still occur.");
+
+        p.HumanizerStrength = -1;
+        p.KeyTravelInfluence = 999;
+        p.RhythmMemoryPercent = 100;
+        p.MicroHesitationPercent = 999;
+        p.Validate();
+        Assert(p.HumanizerStrength == 0 && p.KeyTravelInfluence == 100 &&
+               p.RhythmMemoryPercent == 96 && p.MicroHesitationPercent == 35,
+               "Every new parameter must be clamped safely.");
+        return Task.CompletedTask;
+    }
+
+    private static Task HumanizerMigration()
+    {
+        const string legacyJson = """
+            {"SettingsSchemaVersion":3,"SelectedProfile":"Legacy human",
+             "Profiles":[{"Name":"Legacy human","Style":0,"CharactersPerMinute":317,
+                          "TypoPercent":3.5,"LookbackPercent":9,"CodeReviewPercent":5}]}
+            """;
+        var config = JsonSerializer.Deserialize<AppSettings>(legacyJson)!;
+        config.Validate();
+        Assert(config.SettingsSchemaVersion == 4,
+            "Schema v3 profiles should migrate once to v4.");
+        Assert(config.SelectedProfile == "Legacy human" &&
+               config.GetProfile().CharactersPerMinute == 317 &&
+               config.GetProfile().LookbackPercent == 9,
+            "Migration cannot reset customized typing behavior.");
+        Assert(config.GetProfile().HumanizerStrength == 80,
+            "Legacy profiles use safe new motor defaults.");
+        Assert(config.Profiles.Any(x => x.Name == "Естественный ритм"),
+            "A new natural profile must be selectable after migration.");
+        var count = config.Profiles.Count;
+        config.Validate();
+        Assert(count == config.Profiles.Count, "Repeated validation must be idempotent.");
+        var natural = AppSettings.NaturalPreset();
+        Assert(natural.HumanizerStrength >= 90 &&
+               natural.MicroHesitationPercent > 0 &&
+               natural.KeyTravelInfluence >= 80,
+            "Natural preset must prioritize humanlike rhythm.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task HumanizerEndToEnd()
+    {
+        const string text = "Привет, world! This is an interesting sentence: 42.\n" +
+            "LongLongLongWords and короткиеслова, accents йцукен ёЁ 🙂.\n" +
+            "Next paragraph for authentic pacing and corrective gestures.";
+        const string code = "using System;\nclass Humanizer {\n" +
+            "    static string Name(int number) => \"value \" + number;\n" +
+            "    // A comment with a bilingual word: проверка\n}\n";
+
+        for (var style = 1; style <= 4; style++)
+        for (var seed = 0; seed < 30; seed++)
+        {
+            var p = AppSettings.MakeStylePreset("Humanizer seed", (HumanStyle)style);
+            p.HumanizerStrength = 100;
+            p.MicroHesitationPercent = 30;
+            p.KeyTravelInfluence = 100;
+            p.TypoPercent = 19m;
+            p.AttentionBreakPercent = 70;
+            p.FocusMinCharacters = 6;
+            p.FocusMaxCharacters = 15;
+            p.LookbackPercent = 12;
+            p.CodeReviewPercent = 12;
+            p.Validate();
+
+            var a = new BufferDevice();
+            var b = new BufferDevice();
+            var textEngine = Engine(a, seed * 11 + style);
+            var codeEngine = Engine(b, seed * 19 + style * 31);
+            await textEngine.StartAsync(text, TypingMode.Text, p, Window);
+            await codeEngine.StartAsync(code, TypingMode.Code, p, Window, "Humanizer.cs");
+            Equal(text, a.Text, $"Humanizer text {style}/{seed}");
+            Equal(code, b.Text, $"Humanizer code {style}/{seed}");
+            Assert(a.Cursor == a.Text.Length && b.Cursor == b.Text.Length,
+                "Humanizer review must return caret to exact end.");
+            Assert(textEngine.LastOutcome == TypingOutcome.Completed &&
+                   codeEngine.LastOutcome == TypingOutcome.Completed,
+                "Humanizer must not silently fail a seeded session.");
+        }
+    }
+
     private static Task HumanStylePresets()
     {
         var cps = new List<int>();
@@ -797,7 +1000,7 @@ internal static class Program
                 CharactersPerMinute = 777, Style = HumanStyle.Custom }]
         };
         settings.Validate();
-        Assert(settings.SettingsSchemaVersion == 3, "Schema version");
+        Assert(settings.SettingsSchemaVersion == 4, "Schema version");
         Assert(settings.SelectedProfile == "My custom" &&
                settings.GetProfile().CharactersPerMinute == 777, "Custom profile retained");
         Assert(Enum.GetNames<HumanStyle>().Skip(1).All(n =>
@@ -1199,7 +1402,7 @@ internal static class Program
             ]
         };
         old.Validate();
-        Assert(old.SettingsSchemaVersion == 3,
+        Assert(old.SettingsSchemaVersion == 4,
             "All older settings schemas must be migrated to current format.");
         Assert(old.SelectedProfile == "My custom style",
             "Selected custom profile must be preserved.");
@@ -1414,6 +1617,9 @@ internal static class Program
                     "Settings side navigation and save controls.");
                 Assert(Descendants(settings).OfType<NumericUpDown>().Any(),
                     "Editable profile parameters must remain available.");
+                Assert(Descendants(settings).OfType<Label>().Any(l =>
+                    l.Text.Contains("Humanizer", StringComparison.Ordinal)),
+                    "Humanizer 3.0 settings must be discoverable.");
                 Assert(Descendants(settings).OfType<StudioThemePreview>().Count() == 1,
                     "Live theme preview must exist.");
                 Assert(Descendants(settings).OfType<StudioButton>().Any(b =>
