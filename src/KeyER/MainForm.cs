@@ -47,6 +47,14 @@ public sealed partial class MainForm : Form
     private readonly StudioButton _compactToggle;
     private readonly StudioButton _topToggle;
     private readonly StudioButton _searchToggle;
+    private readonly StudioButton _focusToggle;
+    private readonly StudioButton _wrapToggle;
+    private readonly StudioButton _lineToggle;
+    private readonly Panel _pageHeader;
+    private readonly Panel _workPadding;
+    private readonly Panel _footerPadding;
+    private bool _focusMode;
+    private bool _wordWrap;
     private readonly StudioCard _workspaceCard;
     private readonly Panel _sidebar;
     private readonly Panel _editorSurface;
@@ -253,25 +261,30 @@ public sealed partial class MainForm : Form
             BackColor = Theme.Background, Tag = "background"
         };
         _mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 109));
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 94));
         _mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
+        _mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 149));
         _root.Controls.Add(_mainLayout, 1, 0);
 
-        var pageHeader = new Panel
+        _pageHeader = new Panel
         {
-            Dock = DockStyle.Fill, Padding = new Padding(24, 18, 22, 8),
+            Dock = DockStyle.Fill, Padding = new Padding(17, 12, 16, 6),
             BackColor = Theme.Background, Tag = "background"
         };
+        var pageHeader = _pageHeader;
         _pageTitle = Theme.Label("Текстовый редактор", 20F, true);
-        _pageTitle.Left = 24; _pageTitle.Top = 20;
+        _pageTitle.Left = 17; _pageTitle.Top = 14;
+        _pageTitle.AutoSize = false; _pageTitle.Height = 37;
+        _pageTitle.AutoEllipsis = true;
         _pageSubtitle = Theme.Label("Подготовьте текст и запустите естественный набор", 9.2F);
         _pageSubtitle.ForeColor = Theme.Muted; _pageSubtitle.Tag = "muted";
-        _pageSubtitle.Left = 26; _pageSubtitle.Top = 60;
+        _pageSubtitle.Left = 19; _pageSubtitle.Top = 52;
+        _pageSubtitle.AutoSize = false; _pageSubtitle.Height = 23;
+        _pageSubtitle.AutoEllipsis = true;
 
         var headerActions = new FlowLayoutPanel
         {
-            Dock = DockStyle.Right, Width = 355, Height = 50,
+            Dock = DockStyle.Right, Width = 485, Height = 48,
             FlowDirection = FlowDirection.LeftToRight, WrapContents = false,
             BackColor = Theme.Background, Tag = "background",
             Padding = new Padding(0, 7, 0, 0)
@@ -280,27 +293,36 @@ public sealed partial class MainForm : Form
         settingsButton.Click += (_, _) => OpenSettings();
         _searchToggle = new StudioButton { Text = "⌕   Поиск", Width = 102, Height = 38, Tone = ButtonTone.Quiet };
         _searchToggle.Click += (_, _) => ToggleFind();
-        var helpButton = new StudioButton { Text = "?   Справка", Width = 107, Height = 38, Tone = ButtonTone.Quiet };
+        var helpButton = new StudioButton { Text = "?   Справка", Width = 101, Height = 38, Tone = ButtonTone.Quiet };
         helpButton.Click += (_, _) => ShowHelp();
-        headerActions.Controls.AddRange([_searchToggle, helpButton, settingsButton]);
+        _focusToggle = new StudioButton { Text = "⛶   Фокус F11", Width = 117, Height = 38,
+            Tone = ButtonTone.Outline, AccessibleName = "Режим фокуса редактора. F11" };
+        _focusToggle.Click += (_, _) => ToggleFocusMode();
+        headerActions.Controls.AddRange([_searchToggle, _focusToggle, helpButton, settingsButton]);
         pageHeader.Resize += (_, _) =>
         {
-            var small = pageHeader.ClientSize.Width < 760;
+            var small = pageHeader.ClientSize.Width < 885;
             helpButton.Visible = !small;
-            headerActions.Width = small ? 242 : 355;
-            _searchToggle.Width = small ? 91 : 102;
-            settingsButton.Width = small ? 135 : 126;
-            if (small) _pageTitle.Font = Theme.UiFont(17F, FontStyle.Bold);
-            else _pageTitle.Font = Theme.UiFont(_settings.CompactMode ? 17F : 20F, FontStyle.Bold);
+            headerActions.Width = small ? 336 : 485;
+            _searchToggle.Width = small ? 70 : 102;
+            _searchToggle.Text = small ? "⌕" : "⌕   Поиск";
+            _focusToggle.Width = small ? 112 : 117;
+            settingsButton.Width = small ? 114 : 126;
+            _pageTitle.Width = Math.Max(135, pageHeader.ClientSize.Width - headerActions.Width - 30);
+            _pageSubtitle.Width = _pageTitle.Width;
+            _pageSubtitle.Visible = !small && !_settings.CompactMode;
+            _pageTitle.Font = Theme.UiFont(small || _settings.CompactMode ? 16F : 19F,
+                FontStyle.Bold);
         };
         pageHeader.Controls.AddRange([_pageTitle, _pageSubtitle, headerActions]);
         _mainLayout.Controls.Add(pageHeader, 0, 0);
 
-        var workPadding = new Panel
+        _workPadding = new Panel
         {
-            Dock = DockStyle.Fill, Padding = new Padding(23, 0, 23, 12),
+            Dock = DockStyle.Fill, Padding = new Padding(14, 0, 14, 11),
             Tag = "background", BackColor = Theme.Background
         };
+        var workPadding = _workPadding;
         _workspaceCard = new StudioCard
         {
             Dock = DockStyle.Fill, Padding = new Padding(2), Radius = 18
@@ -308,7 +330,7 @@ public sealed partial class MainForm : Form
         var editorMain = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Tag = "surface" };
         var editorToolbar = new Panel
         {
-            Dock = DockStyle.Top, Height = 60, Padding = new Padding(18, 8, 13, 7),
+            Dock = DockStyle.Top, Height = 62, Padding = new Padding(15, 7, 12, 7),
             BackColor = Theme.Surface, Tag = "surface"
         };
         _sourceBadge = Theme.Label("◉  НОВЫЙ ФРАГМЕНТ", 8.7F, true);
@@ -317,7 +339,8 @@ public sealed partial class MainForm : Form
         _sourceBadge.AutoEllipsis = true;
         _sourceBadge.SetBounds(15, 17, 145, 25);
 
-        _languagePicker = new ComboBox { Width = 124, Height = 29 };
+        _languagePicker = new ComboBox { Width = 132, Height = 32,
+            AccessibleName = "Язык исходного кода" };
         Theme.StyleCombo(_languagePicker);
         _languagePicker.Margin = new Padding(4, 6, 0, 0);
         _languagePicker.Items.AddRange(Enum.GetNames<CodeAnalyzer.Language>());
@@ -332,6 +355,20 @@ public sealed partial class MainForm : Form
             PersistSettings();
         };
 
+        _wrapToggle = new StudioButton
+        {
+            Text = "⇄  Перенос", Width = 106, Height = 36,
+            Left = 313, Top = 6, Tone = ButtonTone.Quiet,
+            AccessibleName = "Перенос длинных строк редактора, Alt+Z"
+        };
+        _wrapToggle.Click += (_, _) => ToggleWordWrap();
+        _lineToggle = new StudioButton
+        {
+            Text = "№  Строки", Width = 99, Height = 36,
+            Left = 422, Top = 6, Tone = ButtonTone.Quiet,
+            AccessibleName = "Показать или скрыть номера строк"
+        };
+        _lineToggle.Click += (_, _) => ToggleLineNumbers();
         var commandRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Right, Width = 492, Height = 45,
@@ -360,21 +397,28 @@ public sealed partial class MainForm : Form
             catch (Exception ex) { SetStatus("Копирование не удалось: " + ex.Message); }
         };
         commandRow.Controls.AddRange([pasteButton, openButton, _saveSource, copyButton, clearButton]);
-        _languagePicker.Left = 159;
+        _languagePicker.Left = 163;
         _languagePicker.Top = 7;
         editorToolbar.Controls.Add(_sourceBadge);
         editorToolbar.Controls.Add(_languagePicker);
+        editorToolbar.Controls.Add(_wrapToggle);
+        editorToolbar.Controls.Add(_lineToggle);
         editorToolbar.Controls.Add(commandRow);
         editorToolbar.Resize += (_, _) =>
         {
-            var tight = editorToolbar.ClientSize.Width < 820;
-            var narrow = editorToolbar.ClientSize.Width < 590;
+            var wide = editorToolbar.ClientSize.Width >= 1060;
+            var tight = editorToolbar.ClientSize.Width < 850;
+            var narrow = editorToolbar.ClientSize.Width < 610;
             copyButton.Visible = !tight;
             clearButton.Visible = !tight;
             commandRow.Width = tight ? 267 : 492;
             _sourceBadge.Visible = !narrow;
-            _languagePicker.Left = narrow ? 12 : 159;
-            _languagePicker.Width = narrow ? 104 : 124;
+            _languagePicker.Left = narrow ? 13 : 163;
+            _languagePicker.Width = narrow ? 107 : 132;
+            _wrapToggle.Visible = wide;
+            _lineToggle.Visible = wide;
+            _wrapToggle.Left = _languagePicker.Right + 12;
+            _lineToggle.Left = _wrapToggle.Right + 4;
         };
 
         var separatorTop = new Panel { Dock = DockStyle.Top, Height = 1, Tag = "border", BackColor = Theme.Border };
@@ -462,12 +506,13 @@ public sealed partial class MainForm : Form
         _editor = new RichTextBox
         {
             Dock = DockStyle.Fill, Multiline = true, AcceptsTab = true,
-            ScrollBars = RichTextBoxScrollBars.Vertical, WordWrap = false,
+            ScrollBars = RichTextBoxScrollBars.Both, WordWrap = false,
             BorderStyle = BorderStyle.None, DetectUrls = false,
             HideSelection = false, EnableAutoDragDrop = false,
             Font = new Font("Cascadia Code", _settings.EditorFontSize),
             BackColor = Theme.Input, ForeColor = Theme.Foreground,
-            ShortcutsEnabled = true
+            ShortcutsEnabled = true,
+            AccessibleName = "Редактор исходного текста и кода"
         };
         _editor.TextChanged += (_, _) =>
         {
@@ -621,11 +666,12 @@ public sealed partial class MainForm : Form
         workPadding.Controls.Add(_workspaceCard);
         _mainLayout.Controls.Add(workPadding, 0, 1);
 
-        var footerPadding = new Panel
+        _footerPadding = new Panel
         {
-            Dock = DockStyle.Fill, Padding = new Padding(23, 0, 23, 20),
+            Dock = DockStyle.Fill, Padding = new Padding(14, 0, 14, 14),
             BackColor = Theme.Background, Tag = "background"
         };
+        var footerPadding = _footerPadding;
         var commandCard = new StudioCard { Dock = DockStyle.Fill, Radius = 18, Padding = new Padding(18, 11, 18, 9) };
         var bottomLayout = new TableLayoutPanel
         {
@@ -942,11 +988,11 @@ public sealed partial class MainForm : Form
     private void ApplyCompactLayout()
     {
         var compact = _settings.CompactMode;
-        _root.ColumnStyles[0].Width = compact ? 191 : 231;
-        _mainLayout.RowStyles[0].Height = compact ? 83 : 109;
-        _mainLayout.RowStyles[2].Height = compact ? 143 : 165;
+        _root.ColumnStyles[0].Width = _focusMode ? 0 : compact ? 191 : 231;
+        _mainLayout.RowStyles[0].Height = _focusMode ? 75 : compact ? 78 : 94;
+        _mainLayout.RowStyles[2].Height = _focusMode ? 119 : compact ? 133 : 149;
         _pageTitle.Font = Theme.UiFont(compact ? 17F : 20F, FontStyle.Bold);
-        _pageSubtitle.Visible = !compact;
+        _pageSubtitle.Visible = !compact && !_focusMode && _pageHeader.ClientSize.Width >= 885;
     }
 
     private void UpdateVisualButtons()
@@ -1010,7 +1056,7 @@ public sealed partial class MainForm : Form
                     case "success": label.ForeColor = Theme.Success; break;
                     case "danger": label.ForeColor = Theme.Danger; break;
                     case "warning": label.ForeColor = Theme.Warning; break;
-                    case "logo": label.ForeColor = Color.White; label.BackColor = Theme.AccentFill; break;
+                    case "logo": label.ForeColor = Theme.AccentText; label.BackColor = Theme.AccentFill; break;
                     default: label.ForeColor = Theme.Foreground; break;
                 }
             }
@@ -1089,6 +1135,7 @@ public sealed partial class MainForm : Form
         UpdateVisualButtons();
         UpdateDocumentChrome();
         UpdateCaret();
+        UpdateEditorViewButtons();
     }
 
     private void RefreshProfiles()
