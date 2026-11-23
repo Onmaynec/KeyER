@@ -26,6 +26,8 @@ internal sealed class SyntaxPainter : IDisposable
     private string? _paintedAppearance;
     private IntPtr _paintedHandle;
     private IntPtr _proofingHandle;
+    private string? _pendingText;
+    private string? _pendingAppearance;
     internal int CompletedPaints { get; private set; }
     internal int SuppressedSchedules { get; private set; }
 
@@ -89,7 +91,18 @@ internal sealed class SyntaxPainter : IDisposable
             SuppressedSchedules++;
             return;
         }
+        var appearance = AppearanceKey();
+        var text = _editor.Text;
+        if (_timer.Enabled && _pendingAppearance == appearance &&
+            string.Equals(_pendingText, text, StringComparison.Ordinal))
+        {
+            // Stats/caret events do not restart the 290 ms debounce timer.
+            SuppressedSchedules++;
+            return;
+        }
         _timer.Stop();
+        _pendingText = text;
+        _pendingAppearance = appearance;
         _timer.Start();
     }
 
@@ -97,6 +110,8 @@ internal sealed class SyntaxPainter : IDisposable
     {
         if (_disposed || _painting || !_editor.IsHandleCreated) return;
         _timer.Stop();
+        _pendingText = null;
+        _pendingAppearance = null;
         DisableNativeProofing();
         if (!NeedsPaint()) { SuppressedSchedules++; return; }
         _painting = true;
