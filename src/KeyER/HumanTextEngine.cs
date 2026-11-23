@@ -23,68 +23,28 @@ public sealed partial class TypingEngine
 
     private sealed class HumanCadence
     {
-        private readonly TypingProfile _p;
-        private readonly Random _rng;
+        private readonly HumanMotorModel _motor;
         private readonly HumanBehaviorModel _behavior;
-        private double _current;
-        private int _burstRemaining;
-        private bool _burst;
 
-        private static readonly HashSet<string> FamiliarPairs = new(StringComparer.OrdinalIgnoreCase)
+        public HumanCadence(TypingProfile profile, Random random,
+            HumanBehaviorModel behavior)
         {
-            "th", "he", "in", "er", "an", "re", "on", "at", "en", "nd",
-            "st", "es", "or", "te", "ed", "is", "it", "al", "ar", "to",
-            "ст", "но", "на", "ов", "ен", "ни", "ра", "пр", "то", "ко",
-            "по", "во", "ро", "ер", "ос", "ре", "ал", "ли", "ка", "не",
-            "та", "ва", "го", "ор", "ни", "ла", "от", "за"
-        };
-
-        public HumanCadence(TypingProfile profile, Random rng, HumanBehaviorModel behavior)
-        {
-            _p = profile;
-            _rng = rng;
+            _motor = new HumanMotorModel(profile, random);
             _behavior = behavior;
-            _current = 60000.0 / profile.CharactersPerMinute;
         }
 
-        public int Next(char c, char previous, int sourceIndex, int wordLength)
+        public int Next(char c, char previous, int sourceIndex, int wordLength) =>
+            _motor.NextDelay(c, previous, wordLength,
+                focusFactor: _behavior.NextSpeedFactor());
+
+        public int Hesitate(char c, char previous) =>
+            _motor.NextHesitation(c, previous, isCode: false);
+
+        public void OnRest(int milliseconds)
         {
-            if (--_burstRemaining <= 0)
-            {
-                _burst = _rng.Next(100) < _p.BurstPercent;
-                _burstRemaining = _rng.Next(7, 22);
-            }
-
-            var factor = 1.0;
-            if (wordLength is > 0 and <= 4)
-                factor *= 100.0 / _p.ShortWordSpeedPercent;
-            else if (wordLength >= 9)
-                factor *= 100.0 / _p.LongWordSpeedPercent;
-
-            if (char.IsDigit(c))
-                factor *= _p.DigitSlowdownPercent / 100.0;
-            else if (char.IsPunctuation(c))
-                factor *= _p.PunctuationSlowdownPercent / 100.0;
-            else if (char.IsSymbol(c) || (char.IsLetter(c) && !SimpleLetter(c)))
-                factor *= _p.SpecialSlowdownPercent / 100.0;
-
-            if (c != '\0' && previous != '\0' && char.IsLetter(c) && char.IsLetter(previous) &&
-                FamiliarPairs.Contains(string.Concat(previous, c)))
-                factor *= 1.0 - _p.FamiliarPairBoostPercent / 100.0;
-
-            if (_burst) factor *= 0.78;
-            factor *= _behavior.NextSpeedFactor();
-            factor *= 1 + (_rng.NextDouble() * 2 - 1) * _p.SpeedVariationPercent / 100.0;
-
-            var target = (60000.0 / _p.CharactersPerMinute) * factor;
-            // Exponential easing prevents abrupt, jittery speed changes.
-            _current += (target - _current) * _p.SpeedSmoothingPercent / 100.0;
-            return Math.Clamp((int)Math.Round(_current), 12, 3500);
+            _motor.OnRest(milliseconds);
+            _behavior.OnRest(milliseconds);
         }
-
-        private static bool SimpleLetter(char c) =>
-            c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or
-                >= 'а' and <= 'я' or >= 'А' and <= 'Я' or 'ё' or 'Ё';
     }
 
     private async Task RunHumanTextAsync(string source, TypingProfile p, IntPtr target,
@@ -103,6 +63,9 @@ public sealed partial class TypingEngine
         {
             await EnsureActiveAsync(target, token);
             var c = source[index];
+            var previousSource = index > 0 ? source[index - 1] : '\0';
+            var hesitation = rhythm.Hesitate(c, previousSource);
+            if (hesitation > 0) await PauseAsync(hesitation, token);
 
             // Delayed edits cannot cross newlines, tabs, emoji or punctuation:
             // navigation by arrow counts is only reliable in plain text/spaces.
@@ -198,7 +161,7 @@ public sealed partial class TypingEngine
             if (index % 4 == 0 || c is '\n' or '\t' || index >= source.Length)
                 ReportProgress(index, source.Length);
 
-            await TextPauseAsync(source, index, c, p, rng, token);
+            await TextPauseAsync(source, index, c, p, rng, rhythm, token);
 
             // A deliberate review stays inside the most recent ordinary word;
             // never navigate across line breaks, emoji, tabs or pending corrections.
@@ -212,13 +175,21 @@ public sealed partial class TypingEngine
             }
 
             var attention = behavior.NextAttentionBreakMilliseconds();
-            if (attention > 0) await PauseAsync(attention, token);
+            if (attention > 0)
+            {
+                await PauseAsync(attention, token);
+                rhythm.OnRest(attention);
+            }
 
             if (c is '.' or '!' or '?' && index > 0 &&
                 (index == source.Length || char.IsWhiteSpace(source[index])))
             {
                 var thinking = behavior.NextThinkingPauseMilliseconds();
-                if (thinking > 0) await PauseAsync(thinking, token);
+                if (thinking > 0)
+                {
+                    await PauseAsync(thinking, token);
+                    rhythm.OnRest(thinking);
+                }
             }
         }
 
@@ -267,30 +238,35 @@ public sealed partial class TypingEngine
     }
 
     private async Task TextPauseAsync(string source, int index, char last,
-        TypingProfile p, Random rng, CancellationToken token)
+        TypingProfile p, Random rng, HumanCadence rhythm, CancellationToken token)
     {
         // Pauses are additional to gradual per-character cadence.
         if (last is '.' or '!' or '?' &&
             (index >= source.Length || char.IsWhiteSpace(source[index])))
             await RandomPauseAsync(p.SentencePauseMinMilliseconds, p.SentencePauseMaxMilliseconds,
-                token, rng);
+                token, rng, rhythm);
 
         if (last == '\n')
         {
             var blankLine = index < source.Length && source[index] == '\n';
             if (blankLine)
-                await RandomPauseAsync(p.BlockPauseMinMilliseconds, p.BlockPauseMaxMilliseconds, token, rng);
+                await RandomPauseAsync(p.BlockPauseMinMilliseconds, p.BlockPauseMaxMilliseconds, token, rng, rhythm);
             else
                 await RandomPauseAsync(p.ParagraphPauseMinMilliseconds,
-                    p.ParagraphPauseMaxMilliseconds, token, rng);
+                    p.ParagraphPauseMaxMilliseconds, token, rng, rhythm);
         }
 
         if (rng.NextDouble() * 100 < (double)p.LongPausePercent)
-            await RandomPauseAsync(p.PauseMinMilliseconds, p.PauseMaxMilliseconds, token, rng);
+            await RandomPauseAsync(p.PauseMinMilliseconds, p.PauseMaxMilliseconds, token, rng, rhythm);
     }
 
-    private Task RandomPauseAsync(int min, int max, CancellationToken token, Random rng) =>
-        PauseAsync(rng.Next(min, max + 1), token);
+    private async Task RandomPauseAsync(int min, int max, CancellationToken token,
+        Random rng, HumanCadence rhythm)
+    {
+        var rest = rng.Next(min, max + 1);
+        await PauseAsync(rest, token);
+        rhythm.OnRest(rest);
+    }
 
     private static bool CanTextMistype(char c) =>
         c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or
