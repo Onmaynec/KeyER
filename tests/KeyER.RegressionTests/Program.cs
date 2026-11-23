@@ -41,6 +41,7 @@ internal static class Program
             await Check("Stable 1.0: interrupted save never replaces a valid backup", StableSettingsProtection);
             await Check("Stable 1.0: cancelled startup never contacts target", StableCancelledStartup);
             await Check("Stable 1.0: multi-profile deterministic soak across Text/Code", StableSoak);
+            await Check("Stable 1.0: atomic global-hotkey reconfiguration and rollback", StableHotkeyRollback);
             await Check("Beta 0.9: single-instance startup guard", BetaSingleInstance);
             await Check("Beta 0.9: atomic document saving", BetaAtomicWrite);
             await Check("Beta 0.9: sanitized support report", BetaSupportPrivacy);
@@ -940,6 +941,65 @@ internal static class Program
         Assert(!VisualStudioDteSession.TryPrepare(IntPtr.Zero,
             out _, out var message), "Invalid target window must be rejected");
         Assert(message.Length > 0, "DTE rejection must be explained");
+        return Task.CompletedTask;
+    }
+
+    private sealed class MockHotkeyBackend : IHotkeyRegistrationBackend
+    {
+        public readonly Dictionary<int, Keys> Active = [];
+        public readonly HashSet<Keys> Blocked = [];
+        public int RegisterCalls { get; private set; }
+        public int UnregisterCalls { get; private set; }
+        public bool Register(IntPtr window, int id, Keys keys)
+        {
+            RegisterCalls++;
+            if (Blocked.Contains(keys) || Active.ContainsKey(id)) return false;
+            Active[id] = keys;
+            return true;
+        }
+        public void Unregister(IntPtr window, int id)
+        {
+            UnregisterCalls++;
+            Active.Remove(id);
+        }
+    }
+
+    private static Task StableHotkeyRollback()
+    {
+        var backend = new MockHotkeyBackend();
+        var start = Keys.Control | Keys.Alt | Keys.F5;
+        var pause = Keys.Control | Keys.Alt | Keys.F6;
+        var stop = Keys.Control | Keys.Alt | Keys.F7;
+        using (var service = new HotkeyRegistrationCoordinator(backend, new IntPtr(123)))
+        {
+            Assert(service.TryApply(start, pause, stop) && service.HasActiveSet,
+                "First shortcut registration.");
+            Assert(backend.Active.Count == 3, "All three shortcuts must be active.");
+            var calls = backend.RegisterCalls;
+            var removes = backend.UnregisterCalls;
+            Assert(service.TryApply(start, pause, stop), "Unchanged settings remain valid.");
+            Assert(backend.RegisterCalls == calls && backend.UnregisterCalls == removes,
+                "Visual-settings change must not unregister active shortcuts.");
+
+            var occupied = Keys.Control | Keys.Alt | Keys.F8;
+            backend.Blocked.Add(occupied);
+            Assert(!service.TryApply(start, pause, occupied),
+                "Occupied shortcut should reject whole change.");
+            Assert(backend.Active.Count == 3 && backend.Active[3] == stop,
+                "Previous shortcut set should be restored transactionally.");
+
+            backend.Blocked.Remove(occupied);
+            Assert(service.TryApply(start, pause, occupied),
+                "Retry after release should work.");
+            Assert(backend.Active[3] == occupied,
+                "New stop key must become active on successful update.");
+            Assert(!service.TryApply(start, start, occupied),
+                "Duplicate keys cannot be registered.");
+            Assert(backend.Active[1] == start && backend.Active[3] == occupied,
+                "Rejected duplicate must not affect existing hotkeys.");
+        }
+        Assert(backend.Active.Count == 0,
+            "Shutdown must unregister exactly the active set.");
         return Task.CompletedTask;
     }
 
