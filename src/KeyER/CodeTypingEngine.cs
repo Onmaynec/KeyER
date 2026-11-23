@@ -12,9 +12,9 @@ public sealed partial class TypingEngine
         var plan = CodeAnalyzer.Analyze(source, filename, language);
         var random = _randomFactory();
         var behavior = new HumanBehaviorModel(profile, random);
+        var motor = new HumanMotorModel(profile, random);
         var done = 0;
-        var baseDelay = 60000.0 / profile.CharactersPerMinute;
-        var smoothDelay = baseDelay;
+        var previousSource = '\0';
 
         await WaitForHotkeyReleaseAsync(target, token);
 
@@ -26,6 +26,7 @@ public sealed partial class TypingEngine
             {
                 await KeyAsync(Keys.Enter, target, token);
                 done++;
+                previousSource = '\n';
                 ReportProgress(done, source.Length);
 
                 // The editor controls auto-indent. No automatic "smart" deletion
@@ -44,7 +45,11 @@ public sealed partial class TypingEngine
                 CodeAnalyzer.LineKind.Control)
             {
                 var thinking = behavior.NextThinkingPauseMilliseconds();
-                if (thinking > 0) await PauseAsync(thinking, token);
+                if (thinking > 0)
+                {
+                    await PauseAsync(thinking, token);
+                    motor.OnRest(thinking);
+                }
             }
 
             foreach (var part in line.Tokens)
@@ -54,6 +59,9 @@ public sealed partial class TypingEngine
                 {
                     await EnsureActiveAsync(target, token);
                     var c = part.Text[index];
+                    var hesitation = motor.NextHesitation(c, previousSource, isCode: true);
+                    if (hesitation > 0)
+                        await PauseAsync(hesitation, token);
 
                     // Mistakes are restricted to identifier/keyword letters. No
                     // syntax, indentation, literal or comment is deliberately corrupted.
@@ -64,7 +72,7 @@ public sealed partial class TypingEngine
                         // Pass token-local text: delayed corrections cannot escape
                         // into another token or cross punctuation.
                         var used = await MistypeAndCorrectAsync(part.Text, index, done,
-                            profile, TypingMode.Code, target, random, false, token);
+                            profile, TypingMode.Code, target, random, false, token, motor);
                         index += used;
                         done += used;
                     }
@@ -75,7 +83,6 @@ public sealed partial class TypingEngine
                         done++;
                     }
 
-                    var previous = index > 1 ? part.Text[index - 2] : '\0';
                     var factor = part.Kind switch
                     {
                         CodeAnalyzer.TokenKind.Identifier => 100.0 / profile.CodeIdentifierSpeedPercent,
@@ -87,13 +94,12 @@ public sealed partial class TypingEngine
                         CodeAnalyzer.TokenKind.Operator => 1.15,
                         _ => 1.0
                     };
-                    factor *= 1.0 + (random.NextDouble() * 2 - 1) *
-                        profile.SpeedVariationPercent / 100.0;
-                    factor *= behavior.NextSpeedFactor();
-
-                    var targetDelay = Math.Clamp(baseDelay * factor, 12, 3000);
-                    smoothDelay += (targetDelay - smoothDelay) * 0.28;
-                    await PauseAsync(Math.Clamp((int)Math.Round(smoothDelay), 12, 3000), token);
+                    var effectiveChar = part.Text[index - 1];
+                    var wordLength = part.Kind is CodeAnalyzer.TokenKind.Identifier or
+                        CodeAnalyzer.TokenKind.Keyword ? part.Text.Length : 0;
+                    await PauseAsync(motor.NextDelay(effectiveChar, previousSource, wordLength,
+                        contextFactor: factor, focusFactor: behavior.NextSpeedFactor()), token);
+                    previousSource = effectiveChar;
 
                     if (done % 4 == 0 || index == part.Text.Length)
                         ReportProgress(done, source.Length);
@@ -132,6 +138,7 @@ public sealed partial class TypingEngine
                         profile.PauseMaxMilliseconds + 1);
                     await PauseAsync(rest, token);
                     behavior.OnRest(rest);
+                    motor.OnRest(rest);
                 }
 
                 // Review only an ordinary identifier, without Ctrl/Alt or Home/End.
@@ -141,7 +148,11 @@ public sealed partial class TypingEngine
                     await ReviewPreviousAsync(part.Text.Length, behavior, target, random, token);
 
                 var attention = behavior.NextAttentionBreakMilliseconds();
-                if (attention > 0) await PauseAsync(attention, token);
+                if (attention > 0)
+                {
+                    await PauseAsync(attention, token);
+                    motor.OnRest(attention);
+                }
             }
         }
 
