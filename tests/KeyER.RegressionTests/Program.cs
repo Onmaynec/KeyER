@@ -39,6 +39,8 @@ internal static class Program
             await Check("Stable 1.0: settings primary/backup recovery", StableSettingsRecovery);
             await Check("Stable 1.0: safe migration without custom profile loss", StableMigration);
             await Check("Stable 1.0: interrupted save never replaces a valid backup", StableSettingsProtection);
+            await Check("Stable 1.0: cancelled startup never contacts target", StableCancelledStartup);
+            await Check("Stable 1.0: multi-profile deterministic soak across Text/Code", StableSoak);
             await Check("Beta 0.9: single-instance startup guard", BetaSingleInstance);
             await Check("Beta 0.9: atomic document saving", BetaAtomicWrite);
             await Check("Beta 0.9: sanitized support report", BetaSupportPrivacy);
@@ -939,6 +941,99 @@ internal static class Program
             out _, out var message), "Invalid target window must be rejected");
         Assert(message.Length > 0, "DTE rejection must be explained");
         return Task.CompletedTask;
+    }
+
+    private static Task StableCancelledStartup()
+    {
+        Exception? issue = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var main = new MainForm();
+                var method = typeof(MainForm).GetMethod("StartNowAsync",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+                Assert(method is not null, "StartNowAsync must remain cancellable.");
+                using var cancelled = new CancellationTokenSource();
+                cancelled.Cancel();
+                var task = (Task?)method!.Invoke(main,
+                    [new IntPtr(12345), cancelled.Token]);
+                Assert(task is not null, "Cancellable start should return a task.");
+                var rejected = false;
+                try { task!.GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { rejected = true; }
+                Assert(rejected,
+                    "A cancelled countdown must abort before target inspection or key injection.");
+                Assert(!Descendants(main).OfType<StudioButton>().Any(b =>
+                    b.Text.Contains("Начать", StringComparison.OrdinalIgnoreCase) && !b.Enabled),
+                    "Cancelled startup must not permanently lock the main start button.");
+            }
+            catch (Exception ex) { issue = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(15)))
+            throw new Exception("Cancelled startup STA smoke timed out.");
+        if (issue is not null) throw new Exception("Cancelled startup failed.", issue);
+        return Task.CompletedTask;
+    }
+
+    private static async Task StableSoak()
+    {
+        const string text =
+            "Hello, developer. Привет, программист! " +
+            "Разнообразныеслова ипроверки. Unicode 😀 € — ёЁ.\n" +
+            "This is the second paragraph: 42 tests, commas, dots and values. " +
+            "VeryLongIdentifiersAndCompoundWordsAreUseful.\n";
+        const string code =
+            "using System;\nnamespace Test {\n" +
+            "    // Stable typing across comments and strings\n" +
+            "    static class Code {\n" +
+            "        static string Name(int count) => \"value-\" + count;\n" +
+            "    }\n}\n";
+
+        var seeds = 0;
+        foreach (var style in new[] { HumanStyle.Casual, HumanStyle.Developer,
+                     HumanStyle.Professional })
+        {
+            for (var seed = 0; seed < 45; seed++)
+            {
+                var profile = AppSettings.MakeStylePreset("Stable soak", style);
+                profile.CharactersPerMinute = 1000;
+                profile.TypoPercent = 9m;
+                profile.LongPausePercent = 0;
+                profile.AttentionBreakPercent = 9;
+                profile.LookbackPercent = 10;
+                profile.CodeReviewPercent = 8;
+                profile.CodeLinePauseMilliseconds = 0;
+                profile.CodeFunctionPauseMilliseconds = 0;
+                profile.CodeBlockPauseMilliseconds = 0;
+                profile.CodeSyntaxPauseMilliseconds = 0;
+
+                var textDevice = new BufferDevice();
+                var textEngine = Engine(textDevice, 1000 + seed * 7 + (int)style * 101);
+                await textEngine.StartAsync(text, TypingMode.Text, profile, Window);
+                Assert(textEngine.LastOutcome == TypingOutcome.Completed,
+                    $"Text soak outcome: {style}, {seed}");
+                Equal(text, textDevice.Text, $"Text soak output: {style}, {seed}");
+                Assert(textEngine.LastProcessedCharacters == text.Length,
+                    "Completed Text must report all source units.");
+
+                var codeDevice = new BufferDevice();
+                var codeEngine = Engine(codeDevice, 2000 + seed * 11 + (int)style * 101);
+                await codeEngine.StartAsync(code, TypingMode.Code, profile, Window,
+                    "stable.cs");
+                Assert(codeEngine.LastOutcome == TypingOutcome.Completed,
+                    $"Code soak outcome: {style}, {seed}");
+                Equal(code, codeDevice.Text, $"Code soak output: {style}, {seed}");
+                Assert(codeEngine.LastProcessedCharacters == code.Length,
+                    "Completed Code must report all source units.");
+                seeds++;
+            }
+        }
+        Assert(seeds == 135, "Stable soak must run across expected random seeds.");
     }
 
     private static Task StableSettingsRecovery()
