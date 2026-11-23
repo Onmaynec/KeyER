@@ -36,6 +36,9 @@ internal static class Program
             await Check("Start waits for hotkey modifiers to be released", ModifierRelease);
             await Check("Start rejects unrelated window", RejectWrongWindow);
             await Check("Settings validation handles malformed values", SettingsValidation);
+            await Check("Stable 1.0: settings primary/backup recovery", StableSettingsRecovery);
+            await Check("Stable 1.0: safe migration without custom profile loss", StableMigration);
+            await Check("Stable 1.0: interrupted save never replaces a valid backup", StableSettingsProtection);
             await Check("Beta 0.9: single-instance startup guard", BetaSingleInstance);
             await Check("Beta 0.9: atomic document saving", BetaAtomicWrite);
             await Check("Beta 0.9: sanitized support report", BetaSupportPrivacy);
@@ -935,6 +938,123 @@ internal static class Program
         Assert(!VisualStudioDteSession.TryPrepare(IntPtr.Zero,
             out _, out var message), "Invalid target window must be rejected");
         Assert(message.Length > 0, "DTE rejection must be explained");
+        return Task.CompletedTask;
+    }
+
+    private static Task StableSettingsRecovery()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "KeyER-stable-recovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "settings.json");
+        try
+        {
+            var fresh = SettingsStore.LoadFromPath(path);
+            Assert(fresh.Origin == SettingsLoadOrigin.Defaults &&
+                   !fresh.HasUnreadableFiles, "Fresh install must be a clean default.");
+            var initial = fresh.Settings;
+            initial.SelectedProfile = "Сбалансированный";
+            SettingsStore.SaveToPath(path, initial);
+            Assert(SettingsStore.LoadFromPath(path).Origin == SettingsLoadOrigin.Primary,
+                "Saved settings should load from primary.");
+            Assert(!File.Exists(path + ".bak"),
+                "First save has no preceding version to back up.");
+
+            var next = initial.Clone();
+            next.SelectedProfile = "Переписка";
+            next.EditorFontSize = 16;
+            SettingsStore.SaveToPath(path, next);
+            Assert(File.Exists(path + ".bak"), "Second save must retain good backup.");
+            Assert(SettingsStore.LoadFromPath(path).Settings.SelectedProfile == "Переписка",
+                "Latest primary should be read.");
+            var stableBackup = File.ReadAllBytes(path + ".bak");
+
+            File.WriteAllText(path, "{ not valid JSON :");
+            var restored = SettingsStore.LoadFromPath(path);
+            Assert(restored.Origin == SettingsLoadOrigin.Backup &&
+                   restored.HasUnreadableFiles,
+                   "Corrupt primary should load preserved valid fallback.");
+            Assert(restored.Settings.SelectedProfile == "Сбалансированный",
+                "Recovered profile should match last valid backup.");
+            SettingsStore.SaveToPath(path, restored.Settings);
+            Assert(SettingsStore.LoadFromPath(path).Origin == SettingsLoadOrigin.Primary,
+                "A clean primary should be restored after save.");
+            Assert(File.ReadAllBytes(path + ".bak").SequenceEqual(stableBackup),
+                "Saving recovery must not overwrite a good .bak with corrupt JSON.");
+            Assert(Directory.EnumerateFiles(folder, "settings.json.corrupt-*").Count() == 1,
+                "Corrupt primary must be preserved for manual recovery.");
+            Assert(!Directory.EnumerateFiles(folder, "*.tmp").Any(),
+                "No residual temp after successful recovery.");
+            return Task.CompletedTask;
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    private static Task StableSettingsProtection()
+    {
+        var folder = Path.Combine(Path.GetTempPath(),
+            "KeyER-stable-corrupt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "settings.json");
+        try
+        {
+            File.WriteAllText(path, "{\"SettingsSchemaVersion\":?");
+            File.WriteAllText(path + ".bak", "also invalid");
+            var state = SettingsStore.LoadFromPath(path);
+            Assert(state.Origin == SettingsLoadOrigin.Defaults &&
+                   state.HasUnreadableFiles, "Both corrupt files should not crash startup.");
+            SettingsStore.SaveToPath(path, state.Settings);
+            Assert(SettingsStore.LoadFromPath(path).Origin == SettingsLoadOrigin.Primary,
+                "Save from defaults should produce valid primary.");
+            Assert(File.ReadAllText(path + ".bak") == "also invalid",
+                "Keep original backup data until a valid next generation exists.");
+            Assert(Directory.EnumerateFiles(folder, "settings.json.corrupt-*").Any(),
+                "Preserve broken primary for debugging and user recovery.");
+
+            var second = state.Settings.Clone();
+            second.EditorFontSize = 15;
+            SettingsStore.SaveToPath(path, second);
+            var backed = SettingsStore.LoadFromPath(path + ".bak");
+            Assert(backed.Origin == SettingsLoadOrigin.Primary &&
+                   backed.Settings.EditorFontSize == state.Settings.EditorFontSize,
+                "A valid previous version should replace invalid backup on next save.");
+            return Task.CompletedTask;
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    private static Task StableMigration()
+    {
+        var old = new AppSettings
+        {
+            SettingsSchemaVersion = 1,
+            SelectedProfile = "My custom style",
+            Profiles =
+            [
+                new TypingProfile
+                {
+                    Name = "My custom style",
+                    CharactersPerMinute = 327,
+                    TypoPercent = 4.3m,
+                    TextEnter = TextEnterMode.ShiftEnter
+                }
+            ]
+        };
+        old.Validate();
+        Assert(old.SettingsSchemaVersion == 3,
+            "All older settings schemas must be migrated to current format.");
+        Assert(old.SelectedProfile == "My custom style",
+            "Selected custom profile must be preserved.");
+        Assert(old.GetProfile().CharactersPerMinute == 327 &&
+               old.GetProfile().TextEnter == TextEnterMode.ShiftEnter,
+            "Custom speed and Enter mode must survive migration.");
+        Assert(old.Profiles.Any(p => p.Name == "Переписка") &&
+               old.Profiles.Any(p => p.Name == "Developer"),
+            "Missing default Text and Human profiles must be added once.");
+        var count = old.Profiles.Count;
+        old.Validate();
+        Assert(old.Profiles.Count == count,
+            "Running validation again must not duplicate migrated profiles.");
         return Task.CompletedTask;
     }
 
