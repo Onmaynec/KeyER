@@ -825,9 +825,11 @@ internal static class Program
                 Assert(c != typo, "Wrong letter must differ from intended key.");
                 Assert(layout.Contains(typo),
                     "Nearby typo must stay in the same writing system.");
-                Assert(HumanMotorModel.TryLocate(c, out var original) &&
-                       HumanMotorModel.TryLocate(typo, out var neighbor) &&
-                       original.Layout == neighbor.Layout, "Physical keyboard mapping.");
+                Assert(HumanMotorModel.TryLocate(c, out var original),
+                    "Source letter must have a keyboard location.");
+                Assert(HumanMotorModel.TryLocate(typo, out var neighbor),
+                    "Nearby typo must have a keyboard location.");
+                Assert(original.Layout == neighbor.Layout, "Physical keyboard mapping.");
                 var dx = original.X - neighbor.X;
                 var dy = original.Y - neighbor.Y;
                 Assert(dx * dx + dy * dy <= 2.9,
