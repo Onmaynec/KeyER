@@ -24,11 +24,45 @@ public sealed partial class MainForm
         _editingBlank = false;
         _editor.Clear();
         RefreshEmptyState();
+        ResetSourceProgress();
         _openedFilePath = null;
         _settings.SourceFileName = "";
         _modified = false;
         UpdateStats();
         SetStatus("Редактор очищен. Добавьте текст или откройте файл.");
+    }
+
+    private void ResetSourceProgress()
+    {
+        if (_progress is null || _progressPercent is null) return;
+        _progress.Value = 0;
+        _progressPercent.Text = "0%";
+        // The previous post-run report remains accessible on demand.
+    }
+
+    private void SaveCurrentSource()
+    {
+        if (_editor.ReadOnly || _editor.TextLength == 0 ||
+            _engine.IsRunning || _countingDown || _ideBusy) return;
+        if (string.IsNullOrWhiteSpace(_openedFilePath))
+        {
+            SaveSourceAs();
+            return;
+        }
+
+        try
+        {
+            AtomicDocumentWriter.WriteText(_openedFilePath, _editor.Text);
+            _modified = false;
+            UpdateDocumentChrome();
+            SetStatus("Изменения сохранены в текущий файл.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+            System.Security.SecurityException or ArgumentException)
+        {
+            DiagnosticLog.Error("document-save", ex);
+            SetStatus("Не удалось сохранить текущий файл. Проверьте папку и права доступа.");
+        }
     }
 
     private void SaveSourceAs()
@@ -102,6 +136,7 @@ public sealed partial class MainForm
             _openedFilePath = path;
             _settings.SourceFileName = Path.GetFileName(path);
             _modified = false;
+            ResetSourceProgress();
             UpdateStats();
             _editor.SelectionStart = 0;
             _editor.ScrollToCaret();
@@ -136,10 +171,29 @@ public sealed partial class MainForm
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        if (keyData == (Keys.Control | Keys.Shift | Keys.S) ||
-            keyData == (Keys.Control | Keys.S))
+        if (keyData == (Keys.Control | Keys.Shift | Keys.S))
         {
             SaveSourceAs();
+            return true;
+        }
+        if (keyData == (Keys.Control | Keys.S))
+        {
+            SaveCurrentSource();
+            return true;
+        }
+        if (keyData == (Keys.Control | Keys.O))
+        {
+            OpenFile();
+            return true;
+        }
+        if (keyData == Keys.F11)
+        {
+            ToggleFocusMode();
+            return true;
+        }
+        if (keyData == (Keys.Alt | Keys.Z))
+        {
+            ToggleWordWrap();
             return true;
         }
         if (keyData == (Keys.Control | Keys.F))

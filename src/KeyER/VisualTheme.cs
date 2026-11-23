@@ -15,28 +15,29 @@ internal static class Theme
     public static bool IsLight => _mode == AppearanceMode.Light ||
         (_mode == AppearanceMode.System && SystemIsLight);
 
-    public static Color Background => IsLight ? Color.FromArgb(244, 246, 252) : Color.FromArgb(12, 15, 26);
-    public static Color Surface => IsLight ? Color.White : Color.FromArgb(23, 28, 44);
-    public static Color SurfaceRaised => IsLight ? Color.FromArgb(236, 240, 249) : Color.FromArgb(31, 37, 57);
-    public static Color Input => IsLight ? Color.FromArgb(250, 251, 255) : Color.FromArgb(18, 22, 36);
-    public static Color Foreground => IsLight ? Color.FromArgb(30, 40, 60) : Color.FromArgb(239, 243, 252);
-    public static Color Muted => IsLight ? Color.FromArgb(107, 119, 139) : Color.FromArgb(152, 162, 184);
-    public static Color Border => IsLight ? Color.FromArgb(215, 222, 236) : Color.FromArgb(51, 59, 82);
-    public static Color Accent => _accent switch
+    public static Color Background => IsLight ? Color.FromArgb(244, 246, 252) : Color.Black;
+    public static Color Surface => IsLight ? Color.White : Color.FromArgb(10, 10, 10);
+    public static Color SurfaceRaised => IsLight ? Color.FromArgb(236, 240, 249) : Color.FromArgb(22, 22, 22);
+    public static Color Input => IsLight ? Color.FromArgb(250, 251, 255) : Color.FromArgb(5, 5, 5);
+    public static Color Foreground => IsLight ? Color.FromArgb(30, 40, 60) : Color.FromArgb(250, 250, 250);
+    public static Color Muted => IsLight ? Color.FromArgb(107, 119, 139) : Color.FromArgb(166, 166, 166);
+    public static Color Border => IsLight ? Color.FromArgb(215, 222, 236) : Color.FromArgb(49, 49, 49);
+    // Dark = near-true-black monochrome; Light keeps the previous palette.
+    public static Color Accent => !IsLight ? Color.White : _accent switch
     {
-        AccentTheme.Ocean => IsLight ? Color.FromArgb(19, 116, 204) : Color.FromArgb(74, 168, 255),
-        AccentTheme.Mint => IsLight ? Color.FromArgb(15, 130, 103) : Color.FromArgb(76, 217, 174),
-        AccentTheme.Amber => IsLight ? Color.FromArgb(176, 96, 18) : Color.FromArgb(246, 182, 95),
-        _ => IsLight ? Color.FromArgb(93, 74, 201) : Color.FromArgb(168, 140, 255)
+        AccentTheme.Ocean => Color.FromArgb(19, 116, 204),
+        AccentTheme.Mint => Color.FromArgb(15, 130, 103),
+        AccentTheme.Amber => Color.FromArgb(176, 96, 18),
+        _ => Color.FromArgb(93, 74, 201)
     };
-    public static Color AccentFill => _accent switch
+    public static Color AccentFill => !IsLight ? Color.White : _accent switch
     {
         AccentTheme.Ocean => Color.FromArgb(42, 143, 237),
         AccentTheme.Mint => Color.FromArgb(32, 177, 137),
         AccentTheme.Amber => Color.FromArgb(235, 158, 59),
         _ => Color.FromArgb(139, 110, 246)
     };
-    public static Color AccentText => Color.White;
+    public static Color AccentText => IsLight ? Color.White : Color.Black;
     public static Color Success => IsLight ? Color.FromArgb(15, 139, 105) : Color.FromArgb(92, 226, 177);
     public static Color Danger => IsLight ? Color.FromArgb(195, 66, 88) : Color.FromArgb(249, 124, 147);
     public static Color Warning => IsLight ? Color.FromArgb(181, 118, 19) : Color.FromArgb(246, 199, 99);
@@ -97,21 +98,76 @@ internal static class Theme
         button.FlatAppearance.MouseOverBackColor = Color.Transparent;
         button.FlatAppearance.MouseDownBackColor = Color.Transparent;
         button.BackColor = danger ? Danger : primary ? AccentFill : SurfaceRaised;
-        button.ForeColor = primary ? Color.White : danger ? (IsLight ? Color.White : Background) : Foreground;
+        button.ForeColor = primary ? AccentText : danger ? (IsLight ? Color.White : Background) : Foreground;
         button.Font = UiFont(9.4F, primary ? FontStyle.Bold : FontStyle.Regular);
         button.Cursor = Cursors.Hand;
         button.Margin = new Padding(4);
     }
 
+    /// <summary>
+    /// Owner-drawn WinForms dropdowns: same colors as Studio surfaces, no
+    /// system-red selection and readable selected rows in black/white themes.
+    /// Uses native ComboBox keyboard navigation and accessibility.
+    /// </summary>
     public static void StyleCombo(ComboBox combo)
     {
         combo.FlatStyle = FlatStyle.Flat;
         combo.DropDownStyle = ComboBoxStyle.DropDownList;
+        combo.DrawMode = DrawMode.OwnerDrawFixed;
+        combo.ItemHeight = 27;
+        combo.DropDownHeight = 258;
         combo.BackColor = SurfaceRaised;
         combo.ForeColor = Foreground;
         combo.Font = UiFont(9.6F);
         combo.Margin = new Padding(4, 7, 4, 4);
         combo.IntegralHeight = false;
+        combo.DrawItem -= DrawStudioComboItem;
+        combo.DrawItem += DrawStudioComboItem;
+        combo.DropDown -= SizeStudioDropdown;
+        combo.DropDown += SizeStudioDropdown;
+    }
+
+    private static void SizeStudioDropdown(object? sender, EventArgs e)
+    {
+        if (sender is not ComboBox combo) return;
+        var desired = combo.Width;
+        foreach (var item in combo.Items)
+        {
+            var length = TextRenderer.MeasureText(
+                Convert.ToString(item) ?? "", combo.Font).Width + 46;
+            desired = Math.Max(desired, length);
+        }
+        combo.DropDownWidth = Math.Min(420, Math.Max(combo.Width, desired));
+    }
+
+    private static void DrawStudioComboItem(object? sender, DrawItemEventArgs e)
+    {
+        if (sender is not ComboBox combo || e.Index < 0 ||
+            e.Index >= combo.Items.Count) return;
+
+        // Collapsed field uses the dark surface; only a selected *popup row*
+        // receives the white/black high-contrast treatment.
+        var popupSelected = (e.State & DrawItemState.Selected) != 0 &&
+            (e.State & DrawItemState.ComboBoxEdit) == 0;
+        var background = popupSelected ? (IsLight ? AccentFill : Color.White) : SurfaceRaised;
+        var foreground = popupSelected ? AccentText : Foreground;
+        using var shade = new SolidBrush(background);
+        e.Graphics.FillRectangle(shade, e.Bounds);
+        var text = Convert.ToString(combo.Items[e.Index]) ?? "";
+        var rect = new Rectangle(e.Bounds.Left + 10, e.Bounds.Top,
+            Math.Max(0, e.Bounds.Width - 18), e.Bounds.Height);
+        TextRenderer.DrawText(e.Graphics, text, combo.Font, rect, foreground,
+            TextFormatFlags.VerticalCenter | TextFormatFlags.Left |
+            TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        if ((e.State & DrawItemState.Focus) != 0 && popupSelected)
+        {
+            using var pen = new Pen(IsLight ? Color.FromArgb(255, 255, 255) :
+                Color.FromArgb(40, 40, 40));
+            var bounds = e.Bounds;
+            bounds.Inflate(-2, -2);
+            if (bounds.Width > 2 && bounds.Height > 2)
+                e.Graphics.DrawRectangle(pen, bounds);
+        }
     }
 
     public static GraphicsPath Rounded(Rectangle bounds, int radius)
@@ -193,7 +249,7 @@ internal sealed class StudioButton : Button
         };
         var textColor = Tone switch
         {
-            ButtonTone.Primary => Color.White,
+            ButtonTone.Primary => Theme.AccentText,
             ButtonTone.Danger => Theme.IsLight ? Color.White : Theme.Background,
             _ => Theme.Foreground
         };
@@ -220,7 +276,8 @@ internal sealed class StudioButton : Button
             TextFormatFlags.EndEllipsis);
         if (_alignLeft && Tone == ButtonTone.Primary && Enabled)
         {
-            using var highlight = new SolidBrush(Color.FromArgb(185, 255, 255, 255));
+            using var highlight = new SolidBrush(Theme.IsLight
+                ? Color.FromArgb(185, 255, 255, 255) : Color.FromArgb(140, 0, 0, 0));
             g.FillRectangle(highlight, bounds.Left + 7, bounds.Top + 11,
                 3, Math.Max(4, bounds.Height - 22));
         }

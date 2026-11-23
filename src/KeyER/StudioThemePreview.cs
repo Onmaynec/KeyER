@@ -43,12 +43,12 @@ internal sealed class StudioThemePreview : Control
             AppearanceMode.System => Theme.SystemIsLight,
             _ => false
         };
-        var background = light ? Color.FromArgb(244, 246, 252) : Color.FromArgb(12, 15, 26);
-        var surface = light ? Color.White : Color.FromArgb(23, 28, 44);
-        var input = light ? Color.FromArgb(250, 251, 255) : Color.FromArgb(18, 22, 36);
-        var ink = light ? Color.FromArgb(30, 40, 60) : Color.FromArgb(239, 243, 252);
-        var muted = light ? Color.FromArgb(105, 117, 140) : Color.FromArgb(150, 163, 187);
-        var accent = _accent switch
+        var background = light ? Color.FromArgb(244, 246, 252) : Color.Black;
+        var surface = light ? Color.White : Color.FromArgb(10, 10, 10);
+        var input = light ? Color.FromArgb(250, 251, 255) : Color.FromArgb(5, 5, 5);
+        var ink = light ? Color.FromArgb(30, 40, 60) : Color.White;
+        var muted = light ? Color.FromArgb(105, 117, 140) : Color.FromArgb(166, 166, 166);
+        var accent = !light ? Color.White : _accent switch
         {
             AccentTheme.Ocean => Color.FromArgb(42, 143, 237),
             AccentTheme.Mint => Color.FromArgb(32, 177, 137),
@@ -62,7 +62,7 @@ internal sealed class StudioThemePreview : Control
         using (var brush = new SolidBrush(background))
         {
             g.FillPath(brush, outline);
-            using var pen = new Pen(light ? Color.FromArgb(208, 216, 230) : Color.FromArgb(57, 67, 92));
+            using var pen = new Pen(light ? Color.FromArgb(208, 216, 230) : Color.FromArgb(49, 49, 49));
             g.DrawPath(pen, outline);
         }
 
@@ -81,7 +81,7 @@ internal sealed class StudioThemePreview : Control
         using (var b = new SolidBrush(accent)) g.FillPath(b, selected);
         TextRenderer.DrawText(g, "Text", bodyFont,
             new Rectangle(sidebarX + 4, frame.Top + 57, sidebarWidth - 31, 18),
-            Color.White, TextFormatFlags.NoPadding);
+            light ? Color.White : Color.Black, TextFormatFlags.NoPadding);
         TextRenderer.DrawText(g, "Code", bodyFont,
             new Rectangle(sidebarX + 4, frame.Top + 87, sidebarWidth - 31, 18),
             muted, TextFormatFlags.NoPadding);
@@ -108,7 +108,8 @@ internal sealed class StudioThemePreview : Control
             Math.Min(150, Math.Max(40, contentRight - contentLeft - 15)), 27);
         using (var buttonPath = Theme.Rounded(buttonBounds, 8))
         using (var b = new SolidBrush(accent)) g.FillPath(b, buttonPath);
-        TextRenderer.DrawText(g, "Начать набор", bodyFont, buttonBounds, Color.White,
+        TextRenderer.DrawText(g, "Начать набор", bodyFont, buttonBounds,
+            light ? Color.White : Color.Black,
             TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
     }
 }
